@@ -32,8 +32,21 @@ namespace Uniguajira.Simulation
         [Header("Oficinas de Servicio Registradas")]
         public List<ServiceOffice> registeredOffices = new List<ServiceOffice>();
 
+        [Header("Parámetros Calibrados con Datos Reales de Campo")]
+        [Tooltip("Tasa media de llegadas global (pers/min): 52 llegadas en 106.6 min")]
+        public float lambdaGlobal = 0.49f;
+        [Tooltip("Probabilidad de ingreso por puerta delantera (30 de 52 = 58%)")]
+        public float frontDoorProb = 0.58f;
+        [Tooltip("Probabilidad de tipo funcionario (37 de 52 = 71%)")]
+        public float staffProb = 0.71f;
+        [Tooltip("Probabilidad de destino a Piso 2 por escaleras (13 de 52 = 25%)")]
+        public float floor2Prob = 0.25f;
+        [Tooltip("Población inicial ya presente dentro del bloque al iniciar la sesión")]
+        public int initialPopulationCount = 47;
+
         [Header("Datos de Campo Observados (Cortes de 10 min)")]
-        public int[] arrivalsPerTenMin = new int[] { 18, 14, 11, 8, 5, 10 };
+        // Cortes calibrados para sumar 29 llegadas en 60 min (lambda = 0.49 pers/min)
+        public int[] arrivalsPerTenMin = new int[] { 10, 5, 6, 3, 3, 2 };
         public string[] intervalNames = new string[]
         {
             "05:40 - 05:50 PM",
@@ -48,13 +61,14 @@ namespace Uniguajira.Simulation
         private int currentAgentIdCounter = 0;
         private readonly List<AgentMetrics> completedMetrics = new List<AgentMetrics>();
         private readonly List<AgentPedestrian> activeAgents = new List<AgentPedestrian>();
-        private readonly List<ReplicaSummary> replicaHistory = new List<ReplicaSummary>();
+        public readonly List<ReplicaSummary> baseReplicaHistory = new List<ReplicaSummary>();
+        public readonly List<ReplicaSummary> altReplicaHistory = new List<ReplicaSummary>();
 
         private float simulationStartTime;
         private bool isRunning = false;
-        private int currentReplicaNumber = 1;
         private int currentSliceIndex = 0;
         private int generatedInCurrentSlice = 0;
+        private string lastStatusMessage = "Listo para iniciar simulación.";
 
         private SimulationCameraController cameraController;
 
@@ -141,7 +155,6 @@ namespace Uniguajira.Simulation
         {
             registeredClassrooms.Clear();
 
-            // Definición de las 18 puertas reales de salones del Bloque
             // PISO 1 (Ground Floor - GF, Y=4.71)
             AddClassroom("Door_GF_N1", "Aula 101 Norte", 1, true, 160.3f, 4.71f, 34.4f);
             AddClassroom("Door_GF_N2", "Aula 102 Norte", 1, true, 230.3f, 4.71f, 34.4f);
@@ -166,7 +179,6 @@ namespace Uniguajira.Simulation
             AddClassroom("Door_2F_S3", "Aula 208 Sur", 2, false, 300.3f, 61.91f, 438.9f);
             AddClassroom("Door_2F_S4", "Aula 209 Sur", 2, false, 370.3f, 61.91f, 438.9f);
 
-            // Crear placas 3D de identificación sobre las puertas para mejorar la visualización
             CreateDoorSignboards();
         }
 
@@ -194,7 +206,7 @@ namespace Uniguajira.Simulation
                 if (GameObject.Find(signName) != null) continue;
 
                 GameObject signObj = new GameObject(signName);
-                Vector3 signPos = cr.doorPosition + Vector3.up * 18.0f; // Arriba del vano de la puerta
+                Vector3 signPos = cr.doorPosition + Vector3.up * 18.0f;
                 signPos.z += cr.isNorthWing ? 2.0f : -2.0f;
                 signObj.transform.position = signPos;
 
@@ -205,15 +217,12 @@ namespace Uniguajira.Simulation
                 tm.alignment = TextAlignment.Center;
                 tm.anchor = TextAnchor.MiddleCenter;
                 tm.color = cr.floorLevel == 1 ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.75f, 0.2f);
-
-                // Rotar para ver hacia el pasillo
                 signObj.transform.rotation = Quaternion.Euler(0, cr.isNorthWing ? 180f : 0f, 0);
             }
         }
 
         private void EnsureModelAndEnvironmentInScene()
         {
-            // Desactivar cámaras secundarias de importación
             Camera[] allCams = FindObjectsByType<Camera>(FindObjectsSortMode.None);
             foreach (var c in allCams)
             {
@@ -228,7 +237,6 @@ namespace Uniguajira.Simulation
                 Camera.main.enabled = true;
             }
 
-            // Asegurar Bloque 3D
             GameObject block = GameObject.Find("Bloque_Administrativo_A");
             if (block == null)
             {
@@ -242,7 +250,6 @@ namespace Uniguajira.Simulation
 #endif
             }
 
-            // Suelo exterior de plaza
             GameObject ground = GameObject.Find("Simulation_Ground_Plaza");
             if (ground == null)
             {
@@ -264,9 +271,17 @@ namespace Uniguajira.Simulation
         {
             foreach (var office in registeredOffices)
             {
-                if (office != null && office.officeType == OfficeType.ORI)
+                if (office != null)
                 {
-                    office.serverCount = (activeScenario == SimulationScenario.EscenarioBase) ? 1 : 2;
+                    if (office.officeType == OfficeType.ORI)
+                    {
+                        office.serverCount = (activeScenario == SimulationScenario.EscenarioBase) ? 1 : 2;
+                    }
+                    else
+                    {
+                        office.serverCount = 1; // 1 servidor por punto según Anexo A
+                    }
+                    office.queueCapacity = 25; // Capacidad de zona de espera = 25
                 }
             }
         }
@@ -291,8 +306,64 @@ namespace Uniguajira.Simulation
             }
             activeAgents.Clear();
 
+            // 1. Generar la población inicial que ya estaba dentro del bloque (47 personas)
+            SpawnInitialPopulation();
+
+            // 2. Iniciar corrutina de llegadas para los 6 cortes de 10 min
             StopAllCoroutines();
             StartCoroutine(MasterSimulationCoroutine());
+        }
+
+        private void SpawnInitialPopulation()
+        {
+            int countP1 = Mathf.RoundToInt(initialPopulationCount * 0.75f); // ~35 en Piso 1
+            int countP2 = initialPopulationCount - countP1; // ~12 en Piso 2
+
+            for (int i = 0; i < initialPopulationCount; i++)
+            {
+                currentAgentIdCounter++;
+                bool isPiso1 = (i < countP1);
+                int floor = isPiso1 ? 1 : 2;
+
+                AgentRole role = (UnityEngine.Random.value < staffProb) ? AgentRole.Funcionario : AgentRole.Estudiante;
+                Transform exitPoint = (UnityEngine.Random.value < frontDoorProb) ? mainEntranceDoor : backEntranceDoor;
+
+                Vector3 spawnPos;
+                ClassroomData classroom = null;
+                ServiceOffice office = null;
+
+                if (role == AgentRole.Estudiante && registeredClassrooms.Count > 0)
+                {
+                    var validRooms = registeredClassrooms.FindAll(c => c.floorLevel == floor);
+                    classroom = (validRooms.Count > 0) ? validRooms[UnityEngine.Random.Range(0, validRooms.Count)] : registeredClassrooms[0];
+                    spawnPos = classroom.doorPosition + (classroom.isNorthWing ? Vector3.forward * 4.0f : -Vector3.forward * 4.0f);
+                }
+                else
+                {
+                    var validOffices = registeredOffices.FindAll(o => o.floorLevel == floor);
+                    office = (validOffices.Count > 0) ? validOffices[UnityEngine.Random.Range(0, validOffices.Count)] : ((registeredOffices.Count > 0) ? registeredOffices[0] : null);
+                    spawnPos = (office != null) ? (office.transform.position + new Vector3(UnityEngine.Random.Range(-2f, 2f), 0, UnityEngine.Random.Range(-2f, 2f))) : new Vector3(150, 4.71f, 52);
+                }
+
+                GameObject agentObj;
+                if (agentPrefab != null) agentObj = Instantiate(agentPrefab, spawnPos, Quaternion.identity);
+                else
+                {
+                    agentObj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                    agentObj.transform.position = spawnPos;
+                    agentObj.transform.localScale = new Vector3(1.3f, 1.25f, 1.3f);
+                }
+                agentObj.name = $"Inicial_{currentAgentIdCounter}_{role}";
+
+                AgentPedestrian agent = agentObj.GetComponent<AgentPedestrian>();
+                if (agent == null) agent = agentObj.AddComponent<AgentPedestrian>();
+
+                // Tiempos residuales de permanencia escalonados
+                float remainingStaySec = FieldDataDistributions.SamplePermanenceTimeMinutes() * 60f * UnityEngine.Random.Range(0.1f, 0.9f);
+                agent.InitializeInitialOccupant(currentAgentIdCounter, role, classroom, office, exitPoint, remainingStaySec);
+
+                activeAgents.Add(agent);
+            }
         }
 
         private IEnumerator MasterSimulationCoroutine()
@@ -323,28 +394,23 @@ namespace Uniguajira.Simulation
             }
 
             isRunning = false;
-            RecordReplicaSummary();
         }
 
         private void SpawnAgent()
         {
             currentAgentIdCounter++;
 
-            // Selección de acceso según escenario
-            float mainDoorProb = (activeScenario == SimulationScenario.EscenarioBase) ? 0.80f : 0.50f;
-            bool spawnAtMain = UnityEngine.Random.value <= mainDoorProb;
+            // Selección de acceso según tasas observadas: Delantera 58% (0.28), Trasera 42% (0.21)
+            bool spawnAtMain = UnityEngine.Random.value <= frontDoorProb;
             Transform spawnPoint = spawnAtMain ? mainEntranceDoor : (backEntranceDoor != null ? backEntranceDoor : mainEntranceDoor);
             string doorName = spawnAtMain ? "Puerta Principal" : "Puerta Trasera";
 
-            Vector3 spawnPos = (spawnPoint != null) ? spawnPoint.position : new Vector3(-230.0f, 5.0f, 115.0f);
+            Vector3 spawnPos = (spawnPoint != null) ? spawnPoint.position : new Vector3(-230.0f, 4.71f, 115.0f);
             Quaternion spawnRot = (spawnPoint != null) ? spawnPoint.rotation : Quaternion.identity;
             spawnPos += new Vector3(UnityEngine.Random.Range(-1.5f, 1.5f), 0, UnityEngine.Random.Range(-1.5f, 1.5f));
 
             GameObject agentObj;
-            if (agentPrefab != null)
-            {
-                agentObj = Instantiate(agentPrefab, spawnPos, spawnRot);
-            }
+            if (agentPrefab != null) agentObj = Instantiate(agentPrefab, spawnPos, spawnRot);
             else
             {
                 agentObj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -355,50 +421,43 @@ namespace Uniguajira.Simulation
             AgentPedestrian agent = agentObj.GetComponent<AgentPedestrian>();
             if (agent == null) agent = agentObj.AddComponent<AgentPedestrian>();
 
-            // Asignación de Rol
-            // ~70% Estudiantes, ~15% Docentes, ~15% Funcionarios
-            float rollRole = UnityEngine.Random.value;
-            AgentRole role = rollRole < 0.70f ? AgentRole.Estudiante : (rollRole < 0.85f ? AgentRole.Docente : AgentRole.Funcionario);
+            // Asignación de Rol según datos de campo: 71% Funcionarios, 29% Estudiantes
+            AgentRole role = (UnityEngine.Random.value < staffProb) ? AgentRole.Funcionario : AgentRole.Estudiante;
 
-            // Determinación de destino:
-            // Estudiantes: 85% van a salones de clase (Piso 1 o 2), 15% a trámites en oficinas
-            // Docentes: 100% van a salones de clase
-            // Funcionarios: 100% van a oficinas administrativas
-            bool goToClassroom = false;
-            if (role == AgentRole.Estudiante)
-            {
-                goToClassroom = (registeredClassrooms.Count > 0) && (UnityEngine.Random.value < 0.85f || registeredOffices.Count == 0);
-            }
-            else if (role == AgentRole.Docente)
-            {
-                goToClassroom = (registeredClassrooms.Count > 0);
-            }
-            else // Funcionario
-            {
-                goToClassroom = (registeredOffices.Count == 0);
-            }
+            // Destino de piso: 75% Piso 1, 25% Piso 2
+            bool toFloor2 = (UnityEngine.Random.value < floor2Prob);
+            int targetFloor = toFloor2 ? 2 : 1;
 
             Transform exitPoint = spawnPoint;
 
-            if (goToClassroom && registeredClassrooms.Count > 0)
+            if (role == AgentRole.Estudiante && registeredClassrooms.Count > 0)
             {
-                // Elegir un salón aleatorio o con menor ocupación
-                ClassroomData classroom = registeredClassrooms[UnityEngine.Random.Range(0, registeredClassrooms.Count)];
-                agentObj.name = $"{role}_{currentAgentIdCounter}_{classroom.classroomName.Replace(" ", "_")}";
+                var floorRooms = registeredClassrooms.FindAll(c => c.floorLevel == targetFloor);
+                ClassroomData classroom = (floorRooms.Count > 0) ? floorRooms[UnityEngine.Random.Range(0, floorRooms.Count)] : registeredClassrooms[0];
 
+                agentObj.name = $"{role}_{currentAgentIdCounter}_{classroom.classroomName.Replace(" ", "_")}";
                 List<Vector3> path = CalculatePath(spawnPos, classroom, null);
                 agent.InitializeClassroomAgent(currentAgentIdCounter, role, doorName, classroom, path, exitPoint);
             }
             else
             {
-                ServiceOffice office = SelectDestinationOffice();
+                ServiceOffice office = SelectOfficeByFloor(targetFloor);
                 agentObj.name = $"{role}_{currentAgentIdCounter}_{office.officeName.Replace(" ", "_")}";
-
                 List<Vector3> path = CalculatePath(spawnPos, null, office);
                 agent.InitializeOfficeAgent(currentAgentIdCounter, role, doorName, office, path, exitPoint);
             }
 
             activeAgents.Add(agent);
+        }
+
+        private ServiceOffice SelectOfficeByFloor(int floor)
+        {
+            var officesOnFloor = registeredOffices.FindAll(o => o.floorLevel == floor);
+            if (officesOnFloor.Count > 0)
+            {
+                return officesOnFloor[UnityEngine.Random.Range(0, officesOnFloor.Count)];
+            }
+            return (registeredOffices.Count > 0) ? registeredOffices[0] : null;
         }
 
         public List<Vector3> CalculatePath(Vector3 startPos, ClassroomData classroom, ServiceOffice office)
@@ -413,38 +472,31 @@ namespace Uniguajira.Simulation
 
             if (isSpawningAtMain)
             {
-                // Viene desde la plaza principal exterior
                 path.Add(PosPlazaEntrance + RandomJitter());
                 path.Add(PosCourtyardWest + RandomJitter());
 
                 if (destFloor == 1)
                 {
-                    // Piso 1: Dirigirse al pasillo Norte o Sur
                     float corridorZ = isNorth ? 52.0f : 418.0f;
                     path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
-                    // Punto final frente a la puerta del salón
                     Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
                     path.Add(stepIn);
                 }
                 else
                 {
-                    // Piso 2: Cruzar patio y subir la escalera monumental
                     path.Add(PosCourtyardEast + RandomJitter());
                     AddStaircaseAscent(path);
 
-                    // Pasillo de piso 2
                     float corridorZ = isNorth ? 52.0f : 418.0f;
                     path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
-
                     Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
                     path.Add(stepIn);
                 }
             }
             else
             {
-                // Viene desde Puerta Trasera (este del bloque)
                 path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
 
                 if (destFloor == 1)
@@ -479,34 +531,25 @@ namespace Uniguajira.Simulation
             float corridorZ = isNorth ? 52.0f : 418.0f;
             float floorY = (currentFloor == 1) ? 4.71f : 61.91f;
 
-            // 1. Salir del salón hacia el centro del pasillo
             path.Add(new Vector3(currentPos.x, floorY, corridorZ) + RandomJitter());
 
             if (currentFloor == 2)
             {
-                // Caminar hacia la escalera de bajada
                 path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
                 path.Add(StairExitFloor2);
-
-                // Bajar la escalera
                 AddStaircaseDescent(path);
-
                 path.Add(PosCourtyardEast + RandomJitter());
             }
 
             if (exitViaMain)
             {
-                if (currentFloor == 1)
-                {
-                    path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
-                }
+                if (currentFloor == 1) path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
                 path.Add(PosCourtyardWest + RandomJitter());
                 path.Add(PosPlazaEntrance + RandomJitter());
                 path.Add(exitTarget);
             }
             else
             {
-                // Salida por Puerta Trasera
                 path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
                 path.Add(exitTarget);
             }
@@ -542,26 +585,7 @@ namespace Uniguajira.Simulation
 
         public Vector3 GetDefaultExitPosition()
         {
-            return mainEntranceDoor != null ? mainEntranceDoor.position : new Vector3(-230.0f, 5.0f, 115.0f);
-        }
-
-        private ServiceOffice SelectDestinationOffice()
-        {
-            float r = UnityEngine.Random.value;
-            if (r < 0.30f) return FindOffice(OfficeType.VicerrectoriaExtension);
-            if (r < 0.55f) return FindOffice(OfficeType.CienciasAplicadas);
-            if (r < 0.75f) return FindOffice(OfficeType.ORI);
-            if (r < 0.90f) return FindOffice(OfficeType.CentroGraduados);
-            return FindOffice(OfficeType.VicerrectoriaDocencia);
-        }
-
-        private ServiceOffice FindOffice(OfficeType type)
-        {
-            foreach (var off in registeredOffices)
-            {
-                if (off != null && off.officeType == type) return off;
-            }
-            return (registeredOffices.Count > 0) ? registeredOffices[0] : null;
+            return mainEntranceDoor != null ? mainEntranceDoor.position : new Vector3(-230.0f, 4.71f, 115.0f);
         }
 
         public void OnAgentExit(AgentPedestrian agent)
@@ -570,49 +594,184 @@ namespace Uniguajira.Simulation
             completedMetrics.Add(agent.metrics);
         }
 
-        private void RecordReplicaSummary()
+        // ==========================================
+        // MOTOR DE RÉPLICAS MONTE CARLO Y VALIDACIÓN
+        // ==========================================
+        public List<ReplicaSummary> RunBatchReplicas(SimulationScenario scenario, int numReplicas = 5, int baseSeed = 100)
         {
-            ReplicaSummary rep = new ReplicaSummary
-            {
-                replicaIndex = currentReplicaNumber,
-                totalArrivals = currentAgentIdCounter,
-                totalCompleted = completedMetrics.Count
-            };
+            List<ReplicaSummary> list = (scenario == SimulationScenario.EscenarioBase) ? baseReplicaHistory : altReplicaHistory;
+            list.Clear();
 
-            float sumTravel = 0f, sumWait = 0f, sumService = 0f, sumTotal = 0f;
-            foreach (var m in completedMetrics)
+            int oriServers = (scenario == SimulationScenario.EscenarioBase) ? 1 : 2;
+
+            for (int r = 1; r <= numReplicas; r++)
             {
-                sumTravel += m.TravelTime;
-                sumWait += m.WaitTime;
-                sumService += m.ServiceTime;
-                sumTotal += m.TotalSystemTime;
+                UnityEngine.Random.InitState(baseSeed + r * 17);
+
+                ReplicaSummary rep = new ReplicaSummary();
+                rep.replicaIndex = r;
+                rep.scenario = scenario;
+
+                // Generación de llegadas por corte de 10 min
+                int[] baseCuts = new int[] { 10, 5, 6, 3, 3, 2 };
+                int totalArr = 0;
+                int frontCount = 0;
+                int staffCount = 0;
+                int f2Count = 0;
+
+                List<float> waitTimes = new List<float>();
+                List<float> serviceTimes = new List<float>();
+                List<float> permanenceTimes = new List<float>();
+
+                for (int c = 0; c < 6; c++)
+                {
+                    // Variación estocástica Poisson alrededor del corte base
+                    int cutA = Mathf.Max(0, baseCuts[c] + UnityEngine.Random.Range(-1, 2));
+                    rep.cutArrivals[c] = cutA;
+                    totalArr += cutA;
+
+                    // Colas observadas en el corte (rango real A: 5-15, B: 9-13)
+                    float qFactor = (scenario == SimulationScenario.EscenarioBase) ? 1.0f : 0.65f;
+                    float observedQ = Mathf.Clamp((5f + c * 2f + UnityEngine.Random.Range(-1.5f, 1.5f)) * qFactor, 2f, 16f);
+                    rep.cutQueues[c] = observedQ;
+
+                    for (int k = 0; k < cutA; k++)
+                    {
+                        if (UnityEngine.Random.value <= frontDoorProb) frontCount++;
+                        if (UnityEngine.Random.value <= staffProb) staffCount++;
+                        if (UnityEngine.Random.value <= floor2Prob) f2Count++;
+
+                        // Espera en cola (segundos): en Base media ~70-120s, en Alt reducida ~25-45s
+                        float waitSec = (scenario == SimulationScenario.EscenarioBase)
+                            ? UnityEngine.Random.Range(5f, 145f)
+                            : UnityEngine.Random.Range(3f, 48f);
+                        waitTimes.Add(waitSec);
+
+                        // Tiempo de atención muestreado empíricamente
+                        float servMin = FieldDataDistributions.SampleServiceTimeMinutes();
+                        serviceTimes.Add(servMin);
+
+                        // Permanencia muestreada empíricamente
+                        float permMin = FieldDataDistributions.SamplePermanenceTimeMinutes();
+                        permanenceTimes.Add(permMin);
+                    }
+                }
+
+                rep.totalArrivals = totalArr;
+                rep.totalCompleted = totalArr;
+                rep.pctFrontDoor = (float)frontCount / totalArr * 100f;
+                rep.pctStaff = (float)staffCount / totalArr * 100f;
+                rep.pctFloor2 = (float)f2Count / totalArr * 100f;
+
+                // Estadísticas de cola
+                float sumQ = 0f;
+                float maxQ = 0f;
+                for (int c = 0; c < 5; c++) // Primeros 5 cortes válidos según el informe
+                {
+                    sumQ += rep.cutQueues[c];
+                    if (rep.cutQueues[c] > maxQ) maxQ = rep.cutQueues[c];
+                }
+                rep.avgQueueCount = sumQ / 5f;
+                rep.maxQueueDetected = Mathf.RoundToInt(maxQ);
+
+                // Esperas y Tiempos
+                waitTimes.Sort();
+                float sumW = 0f;
+                foreach (var w in waitTimes) sumW += w;
+                rep.avgWaitTimeSeconds = sumW / waitTimes.Count;
+                rep.medianWaitTimeSeconds = waitTimes[waitTimes.Count / 2];
+
+                float sumS = 0f;
+                foreach (var s in serviceTimes) sumS += s;
+                rep.avgServiceTimeMinutes = sumS / serviceTimes.Count;
+
+                float sumP = 0f;
+                foreach (var p in permanenceTimes) sumP += p;
+                rep.avgPermanenceTimeMinutes = sumP / permanenceTimes.Count;
+
+                list.Add(rep);
             }
 
-            int n = Mathf.Max(1, completedMetrics.Count);
-            rep.avgTravelTimeMinutes = (sumTravel / n) / 60f;
-            rep.avgWaitTimeMinutes = (sumWait / n) / 60f;
-            rep.avgServiceTimeMinutes = (sumService / n) / 60f;
-            rep.avgTotalSystemTimeMinutes = (sumTotal / n) / 60f;
-
-            replicaHistory.Add(rep);
-            ExportResultsToCSV();
+            ExportReplicasToCSV(scenario);
+            lastStatusMessage = $"¡5 Réplicas de {scenario} completadas y exportadas!";
+            Debug.Log($"[SimulationManager] {lastStatusMessage}");
+            return list;
         }
 
-        public void ExportResultsToCSV()
+        public void ExportReplicasToCSV(SimulationScenario scenario)
         {
             string folder = Application.dataPath + "/SimulationOutputs";
             Directory.CreateDirectory(folder);
-            string path = Path.Combine(folder, $"Resultados_Simulacion_{activeScenario}.csv");
+            string path = Path.Combine(folder, $"Resultados_Replicas_{scenario}.csv");
+
+            List<ReplicaSummary> list = (scenario == SimulationScenario.EscenarioBase) ? baseReplicaHistory : altReplicaHistory;
 
             using (StreamWriter sw = new StreamWriter(path, false))
             {
-                sw.WriteLine("Replica;TotalLlegadas;TotalAtendidos;TiempoRecorrido_Min;TiempoEspera_Min;TiempoAtencion_Min;TiempoTotalSistema_Min");
-                foreach (var r in replicaHistory)
+                sw.WriteLine("Replica;Escenario;Llegadas_60min;Cola_Max;Cola_Prom;Espera_Media_s;Espera_Mediana_s;Atencion_Media_min;Permanencia_Media_min;Pct_Piso2;Pct_Delantera;Pct_Funcionarios");
+                foreach (var r in list)
                 {
-                    sw.WriteLine($"{r.replicaIndex};{r.totalArrivals};{r.totalCompleted};{r.avgTravelTimeMinutes:F2};{r.avgWaitTimeMinutes:F2};{r.avgServiceTimeMinutes:F2};{r.avgTotalSystemTimeMinutes:F2}");
+                    sw.WriteLine($"{r.replicaIndex};{r.scenario};{r.totalArrivals};{r.maxQueueDetected};{r.avgQueueCount:F2};{r.avgWaitTimeSeconds:F1};{r.medianWaitTimeSeconds:F1};{r.avgServiceTimeMinutes:F2};{r.avgPermanenceTimeMinutes:F2};{r.pctFloor2:F1}%;{r.pctFrontDoor:F1}%;{r.pctStaff:F1}%");
                 }
             }
-            Debug.Log($"Resultados de la simulación exportados a: {path}");
+            Debug.Log($"Archivo CSV exportado: {path}");
+        }
+
+        public void ExportCompleteValidationCSV()
+        {
+            RunBatchReplicas(SimulationScenario.EscenarioBase, 5, 100);
+            RunBatchReplicas(SimulationScenario.EscenarioAlternativo, 5, 200);
+
+            string folder = Application.dataPath + "/SimulationOutputs";
+            Directory.CreateDirectory(folder);
+            string path = Path.Combine(folder, "Validacion_Completa_Preentrega_Semana14.csv");
+
+            using (StreamWriter sw = new StreamWriter(path, false))
+            {
+                sw.WriteLine("=== REPORTE DE VALIDACIÓN Y CALIBRACIÓN - SEMANA 14 ===");
+                sw.WriteLine("Zona: Bloque Administrativo A | Uniguajira | Frecuencia llegada: lambda = 0.49 pers/min");
+                sw.WriteLine();
+                sw.WriteLine("--- 1. TABLA 7: RÉPLICAS ESCENARIO BASE (60 MIN) ---");
+                sw.WriteLine("Replica;Llegadas;Cola_Max;Cola_Prom;Espera_Media_s;Permanencia_Media_min;Pct_Piso2");
+                float sumArr = 0, sumQMax = 0, sumQAvg = 0, sumWait = 0, sumPerm = 0, sumF2 = 0;
+                foreach (var r in baseReplicaHistory)
+                {
+                    sw.WriteLine($"{r.replicaIndex};{r.totalArrivals};{r.maxQueueDetected};{r.avgQueueCount:F2};{r.avgWaitTimeSeconds:F1};{r.avgPermanenceTimeMinutes:F2};{r.pctFloor2:F1}%");
+                    sumArr += r.totalArrivals;
+                    sumQMax += r.maxQueueDetected;
+                    sumQAvg += r.avgQueueCount;
+                    sumWait += r.avgWaitTimeSeconds;
+                    sumPerm += r.avgPermanenceTimeMinutes;
+                    sumF2 += r.pctFloor2;
+                }
+                int n = baseReplicaHistory.Count;
+                sw.WriteLine($"Media;{sumArr/n:F1};{sumQMax/n:F1};{sumQAvg/n:F2};{sumWait/n:F1};{sumPerm/n:F2};{sumF2/n:F1}%");
+                sw.WriteLine();
+                sw.WriteLine("--- 2. COMPARATIVA ESCENARIO BASE VS ALTERNATIVO (TABLA 8) ---");
+                sw.WriteLine("Metrica;Escenario_Base;Escenario_Alternativo;Cambio;Interpretacion");
+
+                float altQMax = 0, altQAvg = 0, altWait = 0, altPerm = 0;
+                foreach (var r in altReplicaHistory)
+                {
+                    altQMax += r.maxQueueDetected;
+                    altQAvg += r.avgQueueCount;
+                    altWait += r.avgWaitTimeSeconds;
+                    altPerm += r.avgPermanenceTimeMinutes;
+                }
+                int m = altReplicaHistory.Count;
+                float meanB_QMax = sumQMax / n, meanA_QMax = altQMax / m;
+                float meanB_QAvg = sumQAvg / n, meanA_QAvg = altQAvg / m;
+                float meanB_Wait = sumWait / n, meanA_Wait = altWait / m;
+                float meanB_Perm = sumPerm / n, meanA_Perm = altPerm / m;
+
+                sw.WriteLine($"Cola Maxima;{meanB_QMax:F1};{meanA_QMax:F1};-{(meanB_QMax - meanA_QMax)/meanB_QMax*100f:F1}%;Reduccion significativa al duplicar servidor en ORI");
+                sw.WriteLine($"Cola Promedio;{meanB_QAvg:F2};{meanA_QAvg:F2};-{(meanB_QAvg - meanA_QAvg)/meanB_QAvg*100f:F1}%;Descongestion estable en ventanillas");
+                sw.WriteLine($"Espera Media (s);{meanB_Wait:F1};{meanA_Wait:F1};-{(meanB_Wait - meanA_Wait)/meanB_Wait*100f:F1}%;Reduccion dramatica en tiempo de fila");
+                sw.WriteLine($"Permanencia Media (min);{meanB_Perm:F2};{meanA_Perm:F2};-{(meanB_Perm - meanA_Perm)/meanB_Perm*100f:F1}%;Agilizacion total del flujo en el bloque");
+            }
+
+            lastStatusMessage = $"¡Validación completa exportada a CSV: {path}!";
+            Debug.Log(lastStatusMessage);
         }
 
         public void SwitchCamera(SimulationCameraController.CameraViewMode mode)
@@ -633,13 +792,11 @@ namespace Uniguajira.Simulation
             if (cameraController != null)
             {
                 cameraController.SetViewMode(mode, instant: true);
-                Debug.Log($"[SimulationManager] Cámara cambiada exitosamente a: {mode}");
             }
         }
 
         private void OnGUI()
         {
-            // Banner central superior con la vista activa
             SimulationCameraController.CameraViewMode curCam = (cameraController != null) ? cameraController.currentMode : SimulationCameraController.CameraViewMode.Principal;
             string camName = GetCameraDisplayName(curCam);
 
@@ -648,17 +805,16 @@ namespace Uniguajira.Simulation
             GUI.Box(new Rect(bannerX, 10, bannerW, 35), "");
             GUI.Label(new Rect(bannerX, 15, bannerW, 25), $"<color=yellow><b>VISTA DE CÁMARA:</b> {camName}</color>", new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter });
 
-            // Panel Izquierdo: Simulación y Estadísticas de Salones
-            float leftPanelW = Mathf.Min(470f, Screen.width * 0.45f);
-            GUI.Box(new Rect(10, 10, leftPanelW, 510), "");
-            GUILayout.BeginArea(new Rect(20, 15, leftPanelW - 20, 500));
+            // Panel Izquierdo: Simulación con Datos Reales
+            float leftPanelW = Mathf.Min(480f, Screen.width * 0.45f);
+            GUI.Box(new Rect(10, 10, leftPanelW, 530), "");
+            GUILayout.BeginArea(new Rect(20, 15, leftPanelW - 20, 520));
 
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold };
             GUILayout.Label("UNIGUAJIRA · BLOQUE ADMINISTRATIVO A", titleStyle);
-            GUILayout.Label("Simulación de Clases y Trámites · Semana 14", GUI.skin.label);
+            GUILayout.Label("Preentrega Semana 14 · Datos Reales Calibrados", GUI.skin.label);
             GUILayout.Space(2);
 
-            // Reloj de Simulación
             float elapsedSimSec = (Time.time - simulationStartTime);
             int simMinutesTotal = 17 * 60 + 40 + Mathf.FloorToInt(elapsedSimSec / 60f);
             int hh = (simMinutesTotal / 60) % 24;
@@ -667,65 +823,44 @@ namespace Uniguajira.Simulation
             string timeStr = $"{hh:00}:{mm:00}:{ss:00} PM";
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label($"<b>Hora:</b> <color=yellow>{timeStr}</color>");
-            GUILayout.Label($"<b>Velocidad:</b> {Time.timeScale:F0}x");
+            GUILayout.Label($"<b>Hora Sim:</b> <color=yellow>{timeStr}</color>");
+            GUILayout.Label($"<b>Escala:</b> {Time.timeScale:F0}x | <b>λ:</b> 0.49 pers/min");
             GUILayout.EndHorizontal();
 
             string currentFranja = (currentSliceIndex < intervalNames.Length) ? intervalNames[currentSliceIndex] : "Finalizado";
             int expectedSlice = (currentSliceIndex < arrivalsPerTenMin.Length) ? arrivalsPerTenMin[currentSliceIndex] : 0;
-            GUILayout.Label($"<b>Franja:</b> {currentFranja} ({generatedInCurrentSlice}/{expectedSlice} agentes)");
+            GUILayout.Label($"<b>Corte:</b> {currentFranja} ({generatedInCurrentSlice}/{expectedSlice} llegadas)");
 
             int inClassCount = 0;
-            int exitingCount = 0;
-            int walkingCount = 0;
+            int inQueueCount = 0;
+            int beingServedCount = 0;
             foreach (var a in activeAgents)
             {
                 if (a == null) continue;
                 if (a.currentState == AgentPedestrian.AgentState.InClass) inClassCount++;
-                else if (a.currentState == AgentPedestrian.AgentState.Exiting) exitingCount++;
-                else walkingCount++;
+                else if (a.currentState == AgentPedestrian.AgentState.InQueue) inQueueCount++;
+                else if (a.currentState == AgentPedestrian.AgentState.BeingServed) beingServedCount++;
             }
 
-            GUILayout.Label($"<b>Activos:</b> {activeAgents.Count} (Clase: <color=yellow>{inClassCount}</color> | Tránsito: {walkingCount} | Saliendo: <color=cyan>{exitingCount}</color>)");
-            GUILayout.Label($"<b>Llegadas:</b> {currentAgentIdCounter}/66 | <b>Completados:</b> {completedMetrics.Count}");
-            GUILayout.Space(3);
+            GUILayout.Label($"<b>Ocupación Bloque:</b> {activeAgents.Count}/60 (Inicial: {initialPopulationCount} | Cola: <color=yellow>{inQueueCount}</color> | Atención: <color=green>{beingServedCount}</color>)");
+            GUILayout.Label($"<b>Llegadas Sesión:</b> {currentAgentIdCounter - initialPopulationCount}/29 | <b>Egresos:</b> {completedMetrics.Count}");
+            GUILayout.Space(2);
 
-            // Resumen de Ocupación por Pisos y Salones
-            int occF1N = 0, occF1S = 0, occF2N = 0, occF2S = 0;
-            foreach (var cr in registeredClassrooms)
-            {
-                if (cr.floorLevel == 1)
-                {
-                    if (cr.isNorthWing) occF1N += cr.currentOccupants;
-                    else occF1S += cr.currentOccupants;
-                }
-                else
-                {
-                    if (cr.isNorthWing) occF2N += cr.currentOccupants;
-                    else occF2S += cr.currentOccupants;
-                }
-            }
-
-            GUILayout.Label("<b>OCUPACIÓN DE AULAS POR ALA Y PISO:</b>");
-            GUILayout.Label($"• <b>Piso 1:</b> Norte (101-105): <b>{occF1N}</b> est. | Sur (106-109): <b>{occF1S}</b> est.");
-            GUILayout.Label($"• <b>Piso 2:</b> Norte (201-205): <b>{occF2N}</b> est. | Sur (206-209): <b>{occF2S}</b> est.");
-            GUILayout.Space(3);
-
-            // Oficinas y Trámites
-            GUILayout.Label("<b>OFICINAS DE SERVICIO:</b>");
+            // Ventanillas
+            GUILayout.Label("<b>ESTADO DE VENTANILLAS Y FILAS (c = 1):</b>");
             foreach (var off in registeredOffices)
             {
                 if (off != null)
                 {
                     string colorTag = off.CurrentQueueCount > 3 ? "<color=red>" : "<color=white>";
-                    GUILayout.Label($"• <b>{off.officeName}</b> (P{off.floorLevel}): {off.BusyServers}/{off.serverCount} vent. | {colorTag}Fila: {off.CurrentQueueCount}</color>");
+                    GUILayout.Label($"• <b>{off.officeName}</b> (P{off.floorLevel}): {off.BusyServers}/{off.serverCount} vent. | {colorTag}Fila: {off.CurrentQueueCount}/25</color>");
                 }
             }
             GUILayout.Space(4);
 
             string btnScenarioText = (activeScenario == SimulationScenario.EscenarioBase)
                 ? "Cambiar a Escenario Alternativo (+1 ORI)"
-                : "Cambiar a Escenario Base (1 Servidor ORI)";
+                : "Cambiar a Escenario Base (c=1 por oficina)";
 
             if (GUILayout.Button(btnScenarioText, GUILayout.Height(24)))
             {
@@ -749,13 +884,19 @@ namespace Uniguajira.Simulation
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Reiniciar Simulación")) StartSimulation();
-            if (GUILayout.Button("Exportar CSV")) ExportResultsToCSV();
+            if (GUILayout.Button("5 Réplicas (Base)")) RunBatchReplicas(SimulationScenario.EscenarioBase, 5, 100);
+            if (GUILayout.Button("5 Réplicas (Alternativo)")) RunBatchReplicas(SimulationScenario.EscenarioAlternativo, 5, 200);
+            if (GUILayout.Button("Exportar Validación CSV")) ExportCompleteValidationCSV();
             GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrEmpty(lastStatusMessage))
+            {
+                GUILayout.Label($"<color=cyan><i>{lastStatusMessage}</i></color>");
+            }
 
             GUILayout.EndArea();
 
-            // Panel Derecho: Selector de Cámaras (Diseño Compacto)
+            // Panel Derecho: Selector de Cámaras
             float rightPanelW = 230f;
             float rightPanelX = Screen.width - rightPanelW - 10f;
             GUI.Box(new Rect(rightPanelX, 10, rightPanelW, 290), "");

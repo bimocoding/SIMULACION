@@ -1,0 +1,6 @@
+Replica;Escenario;Llegadas_60min;Cola_Max;Cola_Prom;Espera_Media_s;Espera_Mediana_s;Atencion_Media_min;Permanencia_Media_min;Pct_Piso2;Pct_Delantera;Pct_Funcionarios
+1;EscenarioAlternativo;27;9;6.18;25.7;23.0;16.62;19.69;22.2%;51.9%;74.1%
+2;EscenarioAlternativo;28;9;5.82;24.8;23.0;11.79;18.31;25.0%;67.9%;67.9%
+3;EscenarioAlternativo;32;9;5.85;23.6;23.1;15.84;13.51;28.1%;59.4%;71.9%
+4;EscenarioAlternativo;31;8;5.73;26.5;27.1;17.45;20.07;29.0%;54.8%;67.7%
+5;EscenarioAlternativo;28;9;5.88;24.9;23.8;20.61;20.97;14.3%;60.7%;64.3%

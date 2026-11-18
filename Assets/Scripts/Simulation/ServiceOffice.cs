@@ -11,9 +11,11 @@ namespace Uniguajira.Simulation
         public string officeName = "Oficina";
         public int floorLevel = 1;
 
-        [Header("Capacidad de Servidores")]
+        [Header("Capacidad de Servidores y Espera")]
         [Tooltip("Número de ventanillas o puestos de atención simultáneos (c)")]
         public int serverCount = 1;
+        [Tooltip("Capacidad máxima de la zona de espera por oficina")]
+        public int queueCapacity = 25;
 
         [Header("Distribución de Tiempos de Atención (Minutos)")]
         public float meanServiceTimeMinutes = 3.5f;
@@ -175,11 +177,8 @@ namespace Uniguajira.Simulation
 
         private float SampleServiceTimeSeconds()
         {
-            float u1 = Mathf.Max(0.0001f, Random.value);
-            float u2 = Mathf.Max(0.0001f, Random.value);
-            float randStdNormal = Mathf.Sqrt(-2.0f * Mathf.Log(u1)) * Mathf.Sin(2.0f * Mathf.PI * u2);
-            float durationMin = meanServiceTimeMinutes + stdDevServiceTimeMinutes * randStdNormal;
-            durationMin = Mathf.Max(0.5f, durationMin); // mínimo 30 segundos
+            // Muestreo empírico directo de los datos observados de campo (media 16.5 min, mediana 15.9 min)
+            float durationMin = FieldDataDistributions.SampleServiceTimeMinutes();
             return durationMin * 60f;
         }
 

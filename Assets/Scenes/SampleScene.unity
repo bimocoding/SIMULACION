@@ -1402,6 +1402,7 @@ MonoBehaviour:
   officeName: Facultad Ciencias Aplicadas
   floorLevel: 1
   serverCount: 2
+  queueCapacity: 25
   meanServiceTimeMinutes: 4
   stdDevServiceTimeMinutes: 1
   serviceDeskPoint: {fileID: 1754218918}
@@ -1506,6 +1507,7 @@ MonoBehaviour:
   officeName: Vicerrectoria Docencia
   floorLevel: 2
   serverCount: 1
+  queueCapacity: 25
   meanServiceTimeMinutes: 4.5
   stdDevServiceTimeMinutes: 1.2
   serviceDeskPoint: {fileID: 1269348752}
@@ -1980,6 +1982,11 @@ MonoBehaviour:
   - {fileID: 1464373664}
   - {fileID: 1215901335}
   - {fileID: 838660857}
+  lambdaGlobal: 0.49
+  frontDoorProb: 0.58
+  staffProb: 0.71
+  floor2Prob: 0.25
+  initialPopulationCount: 47
   arrivalsPerTenMin: 120000000e0000000b00000008000000050000000a000000i
   intervalNames:
   - 05:40 - 05:50 PM
@@ -2292,6 +2299,7 @@ MonoBehaviour:
   officeName: Centro Graduados
   floorLevel: 2
   serverCount: 2
+  queueCapacity: 25
   meanServiceTimeMinutes: 3.8
   stdDevServiceTimeMinutes: 0.9
   serviceDeskPoint: {fileID: 1184076554}
@@ -2960,6 +2968,7 @@ MonoBehaviour:
   officeName: Oficina ORI
   floorLevel: 2
   serverCount: 1
+  queueCapacity: 25
   meanServiceTimeMinutes: 3
   stdDevServiceTimeMinutes: 0.6
   serviceDeskPoint: {fileID: 219758832}
@@ -3015,6 +3024,7 @@ MonoBehaviour:
   officeName: Vicerrectoria Extension
   floorLevel: 1
   serverCount: 2
+  queueCapacity: 25
   meanServiceTimeMinutes: 3.5
   stdDevServiceTimeMinutes: 0.8
   serviceDeskPoint: {fileID: 1244703411}

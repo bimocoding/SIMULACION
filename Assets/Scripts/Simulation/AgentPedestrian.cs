@@ -160,6 +160,52 @@ namespace Uniguajira.Simulation
             currentState = AgentState.WalkingToDestination;
         }
 
+        public void InitializeInitialOccupant(int id, AgentRole agentRole, ClassroomData classroom, ServiceOffice office, Transform exit, float remainingStaySeconds)
+        {
+            role = agentRole;
+            exitPoint = exit;
+            targetClassroom = classroom;
+            targetOffice = office;
+            destinationType = (classroom != null) ? AgentDestinationType.Classroom : AgentDestinationType.ServiceOffice;
+
+            metrics.agentId = id;
+            metrics.role = agentRole;
+            metrics.destinationType = destinationType;
+            metrics.entranceDoor = "Ya Estaba (Población Inicial)";
+            metrics.destinationName = (classroom != null) ? classroom.classroomName : office.officeName;
+            metrics.floorLevel = (classroom != null) ? classroom.floorLevel : office.floorLevel;
+            metrics.isInitialPopulation = true;
+            metrics.spawnTime = Time.time;
+            metrics.reachDestinationTime = Time.time;
+            metrics.serviceStartTime = Time.time;
+
+            if (role == AgentRole.Estudiante) baseRoleColor = new Color(0.2f, 0.65f, 1.0f);
+            else if (role == AgentRole.Docente) baseRoleColor = new Color(0.1f, 0.85f, 0.55f);
+            else baseRoleColor = new Color(1.0f, 0.55f, 0.1f);
+            SetColor(baseRoleColor);
+
+            if (overheadLabel != null)
+            {
+                string tag = (classroom != null) ? "[En Aula]" : "[En Oficina]";
+                overheadLabel.text = $"{tag} (Inicial #{id})\n{metrics.destinationName}";
+            }
+
+            StartCoroutine(InitialOccupantStayRoutine(remainingStaySeconds));
+        }
+
+        private IEnumerator InitialOccupantStayRoutine(float staySeconds)
+        {
+            currentState = (targetClassroom != null) ? AgentState.InClass : AgentState.InQueue;
+            SetColor(new Color(1.0f, 0.85f, 0.2f));
+
+            if (targetClassroom != null) targetClassroom.currentOccupants++;
+
+            yield return new WaitForSeconds(staySeconds);
+
+            metrics.serviceEndTime = Time.time;
+            StartExiting();
+        }
+
         public void InitializeOfficeAgent(int id, AgentRole agentRole, string doorName, ServiceOffice office, List<Vector3> pathWaypoints, Transform exit)
         {
             role = agentRole;
