@@ -72,7 +72,7 @@ namespace Uniguajira.Simulation
     public class ClassroomData
     {
         public string doorName;        // e.g. "Door_GF_N1"
-        public string classroomName;   // e.g. "Aula 101 Norte"
+        public string classroomName;   // e.g. "Aula 101"
         public int floorLevel;         // 1 or 2
         public bool isNorthWing;       // true = North (Z < 100), false = South (Z > 300)
         public Vector3 doorPosition;   // World position of the door
