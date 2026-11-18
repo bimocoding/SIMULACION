@@ -177,19 +177,21 @@ namespace Uniguajira.Simulation
 
         private float SampleServiceTimeSeconds()
         {
-            // Muestreo empírico directo de los datos observados de campo (media 16.5 min, mediana 15.9 min)
-            float durationMin = FieldDataDistributions.SampleServiceTimeMinutes();
-            return durationMin * 60f;
+            // Duración calibrada para simulación visual interactiva: 6 a 12 segundos por atención
+            return UnityEngine.Random.Range(6.0f, 12.0f);
         }
 
         private void UpdateQueueVisualPositions()
         {
             Vector3 queueOrigin = queueStartPoint != null ? queueStartPoint.position : transform.position - new Vector3(0, 0, 2f);
             Vector3 queueDir = queueStartPoint != null ? -queueStartPoint.forward : -Vector3.forward;
+            Vector3 sideDir = Vector3.Cross(queueDir, Vector3.up).normalized;
 
             for (int i = 0; i < waitingQueue.Count; i++)
             {
-                Vector3 targetPos = queueOrigin + queueDir * (i * queueSpacing);
+                if (waitingQueue[i] == null) continue;
+                float sideOffset = (i % 2 == 0 ? 0.3f : -0.3f);
+                Vector3 targetPos = queueOrigin + queueDir * (i * queueSpacing) + sideDir * sideOffset;
                 waitingQueue[i].SetDestination(targetPos);
             }
         }

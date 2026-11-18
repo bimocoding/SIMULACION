@@ -40,6 +40,8 @@ namespace Uniguajira.Simulation
         private readonly Queue<Vector3> waypointQueue = new Queue<Vector3>();
         private bool hasWaypoints = false;
         private float timeBlockedOnTarget = 0f;
+        private Vector3 lastStuckPos;
+        private float stuckTimer = 0f;
 
         // Visuales
         private Transform visualTransform;
@@ -52,6 +54,7 @@ namespace Uniguajira.Simulation
         {
             EnsurePhysicsComponents();
             SetupVisualComponents();
+            lastStuckPos = transform.position;
         }
 
         private void EnsurePhysicsComponents()
@@ -66,16 +69,20 @@ namespace Uniguajira.Simulation
                 }
             }
 
+            // Capa 8 para ignorar colisiones físicas entre agentes pero respetar rigurosamente muros y bancas
+            gameObject.layer = 8;
+            Physics.IgnoreLayerCollision(8, 8, true);
+
             characterController = GetComponent<CharacterController>();
             if (characterController == null)
             {
                 characterController = gameObject.AddComponent<CharacterController>();
             }
-            characterController.radius = 0.5f;
+            characterController.radius = 0.4f;
             characterController.height = 1.8f;
             characterController.center = new Vector3(0, 0.9f, 0);
-            characterController.stepOffset = 0.4f;
-            characterController.slopeLimit = 50f;
+            characterController.stepOffset = 0.5f;
+            characterController.slopeLimit = 60f;
             characterController.minMoveDistance = 0f;
 
             navAgent = GetComponent<NavMeshAgent>();
@@ -220,7 +227,9 @@ namespace Uniguajira.Simulation
 
             if (targetClassroom != null) targetClassroom.currentOccupants++;
 
-            yield return new WaitForSeconds(staySeconds);
+            // Duración calibrada para la rotación de horarios visual (4 a 14 segundos)
+            float visualStay = Mathf.Clamp(staySeconds, 4.0f, 14.0f);
+            yield return new WaitForSeconds(visualStay);
 
             metrics.serviceEndTime = Time.time;
             StartExiting();
@@ -276,6 +285,8 @@ namespace Uniguajira.Simulation
         private void AdvanceNextWaypoint()
         {
             timeBlockedOnTarget = 0f;
+            stuckTimer = 0f;
+            lastStuckPos = transform.position;
             if (waypointQueue.Count > 0)
             {
                 currentTargetPosition = waypointQueue.Dequeue();
@@ -305,6 +316,50 @@ namespace Uniguajira.Simulation
         {
             UpdateOverheadRotation();
             HandleMovement();
+
+            // Detección directa de llegada a la puerta de salida exterior
+            if (currentState == AgentState.Exiting)
+            {
+                Vector3 exitPos = (exitPoint != null) ? exitPoint.position : (SimulationManager.Instance != null ? SimulationManager.Instance.GetDefaultExitPosition() : new Vector3(-230f, 4.71f, 115f));
+                float distToExit = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(exitPos.x, exitPos.z));
+                if (distToExit <= 4.5f)
+                {
+                    currentState = AgentState.Done;
+                    metrics.exitTime = Time.time;
+                    if (SimulationManager.Instance != null) SimulationManager.Instance.OnAgentExit(this);
+                    Destroy(gameObject);
+                    return;
+                }
+            }
+
+            // Watchdog anti-atascamiento: si no se desplaza durante 2.5s, avanza al siguiente waypoint
+            if (currentState == AgentState.WalkingToDestination || currentState == AgentState.Exiting)
+            {
+                stuckTimer += Time.deltaTime;
+                if (stuckTimer >= 2.5f)
+                {
+                    float distMoved = Vector3.Distance(transform.position, lastStuckPos);
+                    lastStuckPos = transform.position;
+                    stuckTimer = 0f;
+
+                    if (distMoved < 0.2f)
+                    {
+                        if (waypointQueue.Count > 0)
+                        {
+                            AdvanceNextWaypoint();
+                        }
+                        else if (currentState == AgentState.Exiting)
+                        {
+                            // En la puerta de salida exterior y detenido -> completar salida
+                            currentState = AgentState.Done;
+                            metrics.exitTime = Time.time;
+                            if (SimulationManager.Instance != null) SimulationManager.Instance.OnAgentExit(this);
+                            Destroy(gameObject);
+                            return;
+                        }
+                    }
+                }
+            }
 
             // Lógica de transición de estados
             if (currentState == AgentState.WalkingToDestination)
@@ -346,10 +401,10 @@ namespace Uniguajira.Simulation
                     }
                     else
                     {
-                        // Llegó a la puerta de salida exterior
+                        // Llegó a la puerta de salida exterior -> salir del bloque y desaparecer
                         currentState = AgentState.Done;
                         metrics.exitTime = Time.time;
-                        SimulationManager.Instance.OnAgentExit(this);
+                        if (SimulationManager.Instance != null) SimulationManager.Instance.OnAgentExit(this);
                         Destroy(gameObject);
                     }
                 }
@@ -374,10 +429,10 @@ namespace Uniguajira.Simulation
 
             metrics.serviceStartTime = Time.time;
 
-            // Duración de la clase: entre 8 y 22 segundos de simulación según el perfil
+            // Duración de la clase calibrada para rotación visual: entre 10 y 16 segundos
             float classDuration = (role == AgentRole.Docente)
-                ? Random.Range(14.0f, 24.0f)
-                : Random.Range(8.0f, 18.0f);
+                ? Random.Range(14.0f, 20.0f)
+                : Random.Range(10.0f, 16.0f);
 
             yield return new WaitForSeconds(classDuration);
 
@@ -427,16 +482,16 @@ namespace Uniguajira.Simulation
                     // Velocidad horizontal
                     Vector3 velocity = horizontalDir.normalized * Mathf.Min(walkSpeed, dist / Time.deltaTime);
 
-                    // Desplazamiento vertical (escaleras o ajuste de piso)
+                    // Desplazamiento vertical con gravedad continua para grounding y escalones
                     float yDiff = currentTargetPosition.y - transform.position.y;
-                    velocity.y = Mathf.Clamp(yDiff * 5.0f, -12.0f, 12.0f);
+                    velocity.y = (Mathf.Abs(yDiff) > 1.0f) ? Mathf.Clamp(yDiff * 5.0f, -15.0f, 15.0f) : -9.81f;
 
                     // MOVIMIENTO CON FÍSICAS: CharacterController.Move() usa PhysX
                     // Respeta rigurosamente los MeshColliders de paredes, columnas, puertas y bancas
                     if (characterController != null && characterController.enabled)
                     {
                         CollisionFlags flags = characterController.Move(velocity * Time.deltaTime);
-                        if ((flags & CollisionFlags.Sides) != 0 && dist < 2.5f)
+                        if ((flags & CollisionFlags.Sides) != 0 && dist < 3.5f)
                         {
                             timeBlockedOnTarget += Time.deltaTime;
                         }
@@ -469,18 +524,30 @@ namespace Uniguajira.Simulation
                 float yDist = Mathf.Abs(transform.position.y - currentTargetPosition.y);
 
                 // Si está dentro de la distancia de parada
-                if (xzDist <= (stoppingDistance * 1.4f) && yDist <= 5.0f)
+                if (xzDist <= (stoppingDistance * 1.6f) && yDist <= 6.0f)
                 {
                     return true;
                 }
 
                 // O si la física del muro/puerta lo detuvo cerca de la meta
-                if (timeBlockedOnTarget > 0.4f && xzDist <= 2.8f && yDist <= 5.0f)
+                if (timeBlockedOnTarget > 0.35f && xzDist <= 3.5f && yDist <= 6.0f)
                 {
                     return true;
                 }
 
                 return false;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (targetClassroom != null && (currentState == AgentState.InClass || currentState == AgentState.WalkingToDestination))
+            {
+                targetClassroom.currentOccupants = Mathf.Max(0, targetClassroom.currentOccupants - 1);
+            }
+            if (SimulationManager.Instance != null && SimulationManager.Instance.activeAgents != null)
+            {
+                SimulationManager.Instance.activeAgents.Remove(this);
             }
         }
 

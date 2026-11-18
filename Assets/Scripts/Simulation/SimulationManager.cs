@@ -8,7 +8,22 @@ namespace Uniguajira.Simulation
 {
     public class SimulationManager : MonoBehaviour
     {
-        public static SimulationManager Instance { get; private set; }
+        private static SimulationManager _instance;
+        public static SimulationManager Instance
+        {
+            get
+            {
+                if (_instance == null)
+                {
+                    _instance = FindAnyObjectByType<SimulationManager>();
+                }
+                return _instance;
+            }
+            private set
+            {
+                _instance = value;
+            }
+        }
 
         [Header("Escenario Activo")]
         public SimulationScenario activeScenario = SimulationScenario.EscenarioBase;
@@ -60,7 +75,7 @@ namespace Uniguajira.Simulation
         // Estado interno
         private int currentAgentIdCounter = 0;
         private readonly List<AgentMetrics> completedMetrics = new List<AgentMetrics>();
-        private readonly List<AgentPedestrian> activeAgents = new List<AgentPedestrian>();
+        public readonly List<AgentPedestrian> activeAgents = new List<AgentPedestrian>();
         public readonly List<ReplicaSummary> baseReplicaHistory = new List<ReplicaSummary>();
         public readonly List<ReplicaSummary> altReplicaHistory = new List<ReplicaSummary>();
 
@@ -281,8 +296,14 @@ namespace Uniguajira.Simulation
             {
                 string n = r.gameObject.name.ToLower();
                 if (n.Contains("tree") || n.Contains("foliage") || n.Contains("leaf") || n.Contains("hoja") ||
-                    n.Contains("arbol") || n.Contains("bush") || n.Contains("vegetation") || n.Contains("branch"))
+                    n.Contains("arbol") || n.Contains("bush") || n.Contains("vegetation") || n.Contains("branch") ||
+                    n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045"))
                 {
+                    var existingCol = r.GetComponent<Collider>();
+                    if (existingCol != null && (n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045")))
+                    {
+                        Destroy(existingCol);
+                    }
                     continue;
                 }
                 var col = r.GetComponent<Collider>();
@@ -384,15 +405,22 @@ namespace Uniguajira.Simulation
 
                 if (role == AgentRole.Estudiante && registeredClassrooms.Count > 0)
                 {
+                    // Estudiantes se distribuyen exclusivamente en aulas
                     var validRooms = registeredClassrooms.FindAll(c => c.floorLevel == floor);
-                    classroom = (validRooms.Count > 0) ? validRooms[UnityEngine.Random.Range(0, validRooms.Count)] : registeredClassrooms[0];
-                    spawnPos = classroom.doorPosition + (classroom.isNorthWing ? Vector3.forward * 4.0f : -Vector3.forward * 4.0f);
+                    if (validRooms.Count == 0) validRooms = registeredClassrooms;
+                    classroom = validRooms[i % validRooms.Count];
+
+                    int slot = classroom.currentOccupants;
+                    Vector3 slotOffset = (classroom.isNorthWing ? Vector3.forward : -Vector3.forward) * (2.5f + (slot / 3) * 1.4f) + Vector3.right * ((slot % 3 - 1) * 1.6f);
+                    spawnPos = classroom.doorPosition + slotOffset;
                 }
                 else
                 {
+                    // Funcionarios se distribuyen exclusivamente en oficinas de servicio
                     var validOffices = registeredOffices.FindAll(o => o.floorLevel == floor);
-                    office = (validOffices.Count > 0) ? validOffices[UnityEngine.Random.Range(0, validOffices.Count)] : ((registeredOffices.Count > 0) ? registeredOffices[0] : null);
-                    spawnPos = (office != null) ? (office.transform.position + new Vector3(UnityEngine.Random.Range(-2f, 2f), 0, UnityEngine.Random.Range(-2f, 2f))) : new Vector3(150, 4.71f, 52);
+                    if (validOffices.Count == 0) validOffices = registeredOffices;
+                    office = (validOffices.Count > 0) ? validOffices[i % validOffices.Count] : null;
+                    spawnPos = (office != null) ? (office.transform.position + new Vector3(UnityEngine.Random.Range(-2.0f, 2.0f), 0, UnityEngine.Random.Range(-2.0f, 2.0f))) : new Vector3(150, (floor == 1 ? 4.71f : 61.91f), 52);
                 }
 
                 GameObject agentObj;
@@ -408,8 +436,8 @@ namespace Uniguajira.Simulation
                 AgentPedestrian agent = agentObj.GetComponent<AgentPedestrian>();
                 if (agent == null) agent = agentObj.AddComponent<AgentPedestrian>();
 
-                // Tiempos residuales de permanencia escalonados
-                float remainingStaySec = FieldDataDistributions.SamplePermanenceTimeMinutes() * 60f * UnityEngine.Random.Range(0.1f, 0.9f);
+                // Tiempos residuales de permanencia escalonados para que roten y salgan del bloque ordenadamente (4 a 14 segundos)
+                float remainingStaySec = UnityEngine.Random.Range(4.0f, 14.0f);
                 agent.InitializeInitialOccupant(currentAgentIdCounter, role, classroom, office, exitPoint, remainingStaySec);
 
                 activeAgents.Add(agent);
@@ -483,16 +511,24 @@ namespace Uniguajira.Simulation
             if (role == AgentRole.Estudiante && registeredClassrooms.Count > 0)
             {
                 var floorRooms = registeredClassrooms.FindAll(c => c.floorLevel == targetFloor);
-                ClassroomData classroom = (floorRooms.Count > 0) ? floorRooms[UnityEngine.Random.Range(0, floorRooms.Count)] : registeredClassrooms[0];
+                if (floorRooms.Count == 0) floorRooms = registeredClassrooms;
 
-                agentObj.name = $"{role}_{currentAgentIdCounter}_{classroom.classroomName.Replace(" ", "_")}";
+                // Distribución equilibrada: seleccionar el aula con menor número de ocupantes
+                ClassroomData classroom = floorRooms[0];
+                foreach (var r in floorRooms)
+                {
+                    if (r.currentOccupants < classroom.currentOccupants) classroom = r;
+                }
+
+                agentObj.name = $"Estudiante_{currentAgentIdCounter}_{classroom.classroomName.Replace(" ", "_")}";
                 List<Vector3> path = CalculatePath(spawnPos, classroom, null);
                 agent.InitializeClassroomAgent(currentAgentIdCounter, role, doorName, classroom, path, exitPoint);
             }
             else
             {
+                // Funcionarios van exclusivamente a oficinas de servicio administrativo
                 ServiceOffice office = SelectOfficeByFloor(targetFloor);
-                agentObj.name = $"{role}_{currentAgentIdCounter}_{office.officeName.Replace(" ", "_")}";
+                agentObj.name = $"Funcionario_{currentAgentIdCounter}_{office.officeName.Replace(" ", "_")}";
                 List<Vector3> path = CalculatePath(spawnPos, null, office);
                 agent.InitializeOfficeAgent(currentAgentIdCounter, role, doorName, office, path, exitPoint);
             }
@@ -519,13 +555,14 @@ namespace Uniguajira.Simulation
             float corridorZ = isNorth ? 52.0f : 418.0f;
             float floorY = (destFloor == 1) ? 4.71f : 61.91f;
 
-            // Destino en la puerta o en la cola de la oficina
+            // Destino en la puerta con separación espacial individual o en la cola de la oficina
             Vector3 finalDest;
             if (classroom != null)
             {
-                // Pararse frente a la puerta en el pasillo sin atravesar la pared
+                int slot = classroom.currentOccupants;
+                float slotX = ((slot % 3) - 1.0f) * 1.6f;
                 float standZ = isNorth ? 37.5f : 435.5f;
-                finalDest = new Vector3(classroom.doorPosition.x, floorY, standZ);
+                finalDest = new Vector3(classroom.doorPosition.x + slotX, floorY, standZ);
             }
             else
             {
@@ -537,52 +574,45 @@ namespace Uniguajira.Simulation
 
             if (isSpawningAtMain)
             {
-                // 1. Plaza exterior amplia
+                // Desde Puerta Principal (Oeste): plaza exterior -> acceso limpio al pasillo
                 path.Add(new Vector3(-120.0f, 4.71f, 150.0f) + RandomJitter());
-                // 2. Acceso oeste despejado entre columnas
-                path.Add(new Vector3(35.0f, 4.71f, 200.0f) + RandomJitter());
+                path.Add(new Vector3(55.0f, 4.71f, corridorZ) + RandomJitter());
 
                 if (destFloor == 1)
                 {
-                    // 3. Giro ortogonal limpio al pasillo Norte o Sur
-                    path.Add(new Vector3(35.0f, 4.71f, corridorZ) + RandomJitter());
-                    // 4. Recorrido por el centro del pasillo hasta el salón/oficina
+                    // Recorrido por el centro del pasillo
                     path.Add(finalHallway + RandomJitter());
-                    // 5. Acercarse a la puerta/cola
                     path.Add(finalDest);
                 }
                 else
                 {
-                    // 3. Recorrer patio central despejado hacia la base de la escalera
-                    path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
-                    // 4. Subir escaleras monumentales
+                    // Piso 2: avanzar por pasillo de piso 1 hasta la base de la escalera (x=380)
+                    path.Add(new Vector3(380.0f, 4.71f, corridorZ) + RandomJitter());
+                    path.Add(new Vector3(380.0f, 4.71f, 193.0f));
                     AddStaircaseAscent(path);
-                    // 5. Llegada al puente este de Piso 2
-                    path.Add(new Vector3(360.0f, 61.91f, 196.0f) + RandomJitter());
-                    // 6. Conexión al pasillo Norte o Sur de Piso 2
+                    path.Add(new Vector3(360.0f, 61.91f, 193.0f));
                     path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
-                    // 7. Recorrido por el centro del pasillo
                     path.Add(finalHallway + RandomJitter());
-                    // 8. Acercarse a la puerta/cola
                     path.Add(finalDest);
                 }
             }
             else
             {
-                // Puerta trasera (Este)
-                path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
-                path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
+                // Desde Puerta Trasera (Este): entrar por extremo del pasillo (x=450)
+                path.Add(new Vector3(450.0f, 4.71f, 200.0f) + RandomJitter());
+                path.Add(new Vector3(450.0f, 4.71f, corridorZ) + RandomJitter());
 
                 if (destFloor == 1)
                 {
-                    path.Add(new Vector3(360.0f, 4.71f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
                     path.Add(finalDest);
                 }
                 else
                 {
+                    path.Add(new Vector3(380.0f, 4.71f, corridorZ) + RandomJitter());
+                    path.Add(new Vector3(380.0f, 4.71f, 193.0f));
                     AddStaircaseAscent(path);
-                    path.Add(new Vector3(360.0f, 61.91f, 196.0f) + RandomJitter());
+                    path.Add(new Vector3(360.0f, 61.91f, 193.0f));
                     path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
                     path.Add(finalDest);
@@ -602,32 +632,33 @@ namespace Uniguajira.Simulation
             float corridorZ = isNorth ? 52.0f : 418.0f;
             float floorY = (currentFloor == 1) ? 4.71f : 61.91f;
 
-            // 1. Salir del salón hacia el centro del pasillo
+            // 1. Salir del salón/oficina hacia el pasillo
             path.Add(new Vector3(currentPos.x, floorY, corridorZ) + RandomJitter());
 
             if (currentFloor == 2)
             {
-                // Recorrer pasillo hasta el puente de la escalera
+                // Recorrer pasillo hasta la conexión de la escalera en piso 2 (x=360)
                 path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
-                path.Add(new Vector3(360.0f, 61.91f, 196.0f) + RandomJitter());
+                path.Add(new Vector3(360.0f, 61.91f, 193.0f));
                 AddStaircaseDescent(path);
-                path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
+                path.Add(new Vector3(380.0f, 4.71f, 193.0f));
+                // Volver a ingresar al pasillo en piso 1
+                path.Add(new Vector3(380.0f, 4.71f, corridorZ) + RandomJitter());
             }
 
             if (exitViaMain)
             {
-                if (currentFloor == 1)
-                {
-                    path.Add(new Vector3(35.0f, 4.71f, corridorZ) + RandomJitter());
-                }
-                path.Add(new Vector3(35.0f, 4.71f, 200.0f) + RandomJitter());
+                // Salida por Puerta Principal (Oeste) a través del pasillo
+                path.Add(new Vector3(55.0f, 4.71f, corridorZ) + RandomJitter());
+                path.Add(new Vector3(55.0f, 4.71f, 150.0f) + RandomJitter());
                 path.Add(new Vector3(-120.0f, 4.71f, 150.0f) + RandomJitter());
                 path.Add(exitTarget);
             }
             else
             {
-                path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
-                path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
+                // Salida por Puerta Trasera (Este) a través del pasillo
+                path.Add(new Vector3(450.0f, 4.71f, corridorZ) + RandomJitter());
+                path.Add(new Vector3(450.0f, 4.71f, 200.0f) + RandomJitter());
                 path.Add(exitTarget);
             }
 
@@ -636,23 +667,22 @@ namespace Uniguajira.Simulation
 
         private void AddStaircaseAscent(List<Vector3> path)
         {
-            path.Add(StairBottom);
-            path.Add(StairMid1);
-            path.Add(StairLanding1);
-            path.Add(StairLanding2);
-            path.Add(StairMid2);
-            path.Add(StairTop);
-            path.Add(StairExitFloor2);
+            path.Add(new Vector3(380.0f, 4.71f, 193.0f));
+            path.Add(new Vector3(398.0f, 20.0f, 193.0f));
+            path.Add(new Vector3(418.0f, 40.0f, 193.0f));
+            path.Add(new Vector3(400.0f, 54.0f, 193.0f));
+            path.Add(new Vector3(380.0f, 61.91f, 193.0f));
+            path.Add(new Vector3(360.0f, 61.91f, 193.0f));
         }
 
         private void AddStaircaseDescent(List<Vector3> path)
         {
-            path.Add(StairTop);
-            path.Add(StairMid2);
-            path.Add(StairLanding2);
-            path.Add(StairLanding1);
-            path.Add(StairMid1);
-            path.Add(StairBottom);
+            path.Add(new Vector3(360.0f, 61.91f, 193.0f));
+            path.Add(new Vector3(380.0f, 61.91f, 193.0f));
+            path.Add(new Vector3(400.0f, 54.0f, 193.0f));
+            path.Add(new Vector3(418.0f, 40.0f, 193.0f));
+            path.Add(new Vector3(398.0f, 20.0f, 193.0f));
+            path.Add(new Vector3(380.0f, 4.71f, 193.0f));
         }
 
         private Vector3 RandomJitter()
