@@ -26,6 +26,9 @@ namespace Uniguajira.Simulation
         [Header("Prefab de Agentes")]
         public GameObject agentPrefab;
 
+        [Header("Directorio de Salones (Aulas)")]
+        public List<ClassroomData> registeredClassrooms = new List<ClassroomData>();
+
         [Header("Oficinas de Servicio Registradas")]
         public List<ServiceOffice> registeredOffices = new List<ServiceOffice>();
 
@@ -55,8 +58,24 @@ namespace Uniguajira.Simulation
 
         private SimulationCameraController cameraController;
 
+        // Waypoints fijos de referencia de la arquitectura del Bloque
+        public static readonly Vector3 PosPlazaEntrance = new Vector3(-140.0f, 4.71f, 170.0f);
+        public static readonly Vector3 PosCourtyardWest = new Vector3(10.0f, 4.71f, 180.0f);
+        public static readonly Vector3 PosCourtyardEast = new Vector3(350.0f, 4.71f, 200.0f);
+
+        // Escalera monumental (Piso 1 -> Piso 2)
+        public static readonly Vector3 StairBottom = new Vector3(410.3f, 4.71f, 222.9f);
+        public static readonly Vector3 StairMid1 = new Vector3(410.3f, 20.0f, 200.0f);
+        public static readonly Vector3 StairLanding1 = new Vector3(410.3f, 40.0f, 182.0f);
+        public static readonly Vector3 StairLanding2 = new Vector3(440.3f, 41.0f, 182.0f);
+        public static readonly Vector3 StairMid2 = new Vector3(440.3f, 59.0f, 218.0f);
+        public static readonly Vector3 StairTop = new Vector3(440.3f, 62.0f, 222.9f);
+        public static readonly Vector3 StairExitFloor2 = new Vector3(410.0f, 62.0f, 222.9f);
+
         private void Awake()
         {
+            Application.runInBackground = true;
+
             if (Instance != null && Instance != this)
             {
                 Destroy(gameObject);
@@ -68,6 +87,8 @@ namespace Uniguajira.Simulation
         private void Start()
         {
             EnsureModelAndEnvironmentInScene();
+            InitializeClassroomDirectory();
+            EnsureAccessPoints();
 
             cameraController = FindAnyObjectByType<SimulationCameraController>();
             if (cameraController == null && Camera.main != null)
@@ -79,20 +100,126 @@ namespace Uniguajira.Simulation
             ApplyScenarioSettings();
             StartSimulation();
 
-            // Vista principal frontal inicial por defecto
             SwitchCamera(SimulationCameraController.CameraViewMode.Principal);
+        }
+
+        private void EnsureAccessPoints()
+        {
+            GameObject accessContainer = GameObject.Find("Puntos_Acceso");
+            if (accessContainer == null) accessContainer = new GameObject("Puntos_Acceso");
+
+            if (mainEntranceDoor == null)
+            {
+                Transform md = accessContainer.transform.Find("Puerta_Principal");
+                if (md == null)
+                {
+                    GameObject mdObj = new GameObject("Puerta_Principal");
+                    mdObj.transform.SetParent(accessContainer.transform);
+                    md = mdObj.transform;
+                }
+                mainEntranceDoor = md;
+            }
+            mainEntranceDoor.position = new Vector3(-230.0f, 4.71f, 115.0f);
+            mainEntranceDoor.rotation = Quaternion.Euler(0, 73f, 0);
+
+            if (backEntranceDoor == null)
+            {
+                Transform bd = accessContainer.transform.Find("Puerta_Trasera");
+                if (bd == null)
+                {
+                    GameObject bdObj = new GameObject("Puerta_Trasera");
+                    bdObj.transform.SetParent(accessContainer.transform);
+                    bd = bdObj.transform;
+                }
+                backEntranceDoor = bd;
+            }
+            backEntranceDoor.position = new Vector3(460.0f, 4.71f, 200.0f);
+            backEntranceDoor.rotation = Quaternion.Euler(0, -90f, 0);
+        }
+
+        public void InitializeClassroomDirectory()
+        {
+            registeredClassrooms.Clear();
+
+            // Definición de las 18 puertas reales de salones del Bloque
+            // PISO 1 (Ground Floor - GF, Y=4.71)
+            AddClassroom("Door_GF_N1", "Aula 101 Norte", 1, true, 160.3f, 4.71f, 34.4f);
+            AddClassroom("Door_GF_N2", "Aula 102 Norte", 1, true, 230.3f, 4.71f, 34.4f);
+            AddClassroom("Door_GF_N3", "Aula 103 Norte", 1, true, 300.3f, 4.71f, 34.4f);
+            AddClassroom("Door_GF_N4", "Aula 104 Norte", 1, true, 370.3f, 4.71f, 34.4f);
+            AddClassroom("Door_GF_N5", "Aula 105 Norte", 1, true, 440.3f, 4.71f, 34.4f);
+
+            AddClassroom("Door_GF_S1", "Aula 106 Sur", 1, false, 160.3f, 4.71f, 438.9f);
+            AddClassroom("Door_GF_S2", "Aula 107 Sur", 1, false, 230.3f, 4.71f, 438.9f);
+            AddClassroom("Door_GF_S3", "Aula 108 Sur", 1, false, 300.3f, 4.71f, 438.9f);
+            AddClassroom("Door_GF_S4", "Aula 109 Sur", 1, false, 370.3f, 4.71f, 438.9f);
+
+            // PISO 2 (Second Floor - 2F, Y=61.91)
+            AddClassroom("Door_2F_N1", "Aula 201 Norte", 2, true, 160.3f, 61.91f, 34.4f);
+            AddClassroom("Door_2F_N2", "Aula 202 Norte", 2, true, 230.3f, 61.91f, 34.4f);
+            AddClassroom("Door_2F_N3", "Aula 203 Norte", 2, true, 300.3f, 61.91f, 34.4f);
+            AddClassroom("Door_2F_N4", "Aula 204 Norte", 2, true, 370.3f, 61.91f, 34.4f);
+            AddClassroom("Door_2F_N5", "Aula 205 Norte", 2, true, 440.3f, 61.91f, 34.4f);
+
+            AddClassroom("Door_2F_S1", "Aula 206 Sur", 2, false, 160.3f, 61.91f, 438.9f);
+            AddClassroom("Door_2F_S2", "Aula 207 Sur", 2, false, 230.3f, 61.91f, 438.9f);
+            AddClassroom("Door_2F_S3", "Aula 208 Sur", 2, false, 300.3f, 61.91f, 438.9f);
+            AddClassroom("Door_2F_S4", "Aula 209 Sur", 2, false, 370.3f, 61.91f, 438.9f);
+
+            // Crear placas 3D de identificación sobre las puertas para mejorar la visualización
+            CreateDoorSignboards();
+        }
+
+        private void AddClassroom(string door, string name, int floor, bool isNorth, float x, float y, float z)
+        {
+            float hallwayZ = isNorth ? 52.0f : 418.0f;
+            ClassroomData cr = new ClassroomData
+            {
+                doorName = door,
+                classroomName = name,
+                floorLevel = floor,
+                isNorthWing = isNorth,
+                doorPosition = new Vector3(x, y, z),
+                hallwayPoint = new Vector3(x, y, hallwayZ),
+                currentOccupants = 0
+            };
+            registeredClassrooms.Add(cr);
+        }
+
+        private void CreateDoorSignboards()
+        {
+            foreach (var cr in registeredClassrooms)
+            {
+                string signName = "Sign_" + cr.doorName;
+                if (GameObject.Find(signName) != null) continue;
+
+                GameObject signObj = new GameObject(signName);
+                Vector3 signPos = cr.doorPosition + Vector3.up * 18.0f; // Arriba del vano de la puerta
+                signPos.z += cr.isNorthWing ? 2.0f : -2.0f;
+                signObj.transform.position = signPos;
+
+                TextMesh tm = signObj.AddComponent<TextMesh>();
+                tm.text = cr.classroomName.Replace("Aula ", "SALÓN ");
+                tm.fontSize = 22;
+                tm.characterSize = 0.12f;
+                tm.alignment = TextAlignment.Center;
+                tm.anchor = TextAnchor.MiddleCenter;
+                tm.color = cr.floorLevel == 1 ? new Color(0.2f, 0.85f, 1f) : new Color(1f, 0.75f, 0.2f);
+
+                // Rotar para ver hacia el pasillo
+                signObj.transform.rotation = Quaternion.Euler(0, cr.isNorthWing ? 180f : 0f, 0);
+            }
         }
 
         private void EnsureModelAndEnvironmentInScene()
         {
-            // 0. Desactivar y eliminar cualquier cámara secundaria importada en el FBX
+            // Desactivar cámaras secundarias de importación
             Camera[] allCams = FindObjectsByType<Camera>(FindObjectsSortMode.None);
             foreach (var c in allCams)
             {
                 if (c != Camera.main && c.gameObject.name != "Main Camera")
                 {
                     c.enabled = false;
-                    Debug.Log($"[Simulation] Desactivando cámara secundaria de FBX: {c.gameObject.name}");
                 }
             }
             if (Camera.main != null)
@@ -101,7 +228,7 @@ namespace Uniguajira.Simulation
                 Camera.main.enabled = true;
             }
 
-            // 1. Asegurar que el Bloque Administrativo 3D esté en la escena
+            // Asegurar Bloque 3D
             GameObject block = GameObject.Find("Bloque_Administrativo_A");
             if (block == null)
             {
@@ -111,25 +238,24 @@ namespace Uniguajira.Simulation
                 {
                     block = Instantiate(modelAsset, Vector3.zero, Quaternion.identity);
                     block.name = "Bloque_Administrativo_A";
-                    Debug.Log("[Simulation] Bloque_Administrativo_A instanciado en la escena dinámicamente.");
                 }
 #endif
             }
 
-            // 2. Asegurar Plano de Suelo para contraste visual y sombras
+            // Suelo exterior de plaza
             GameObject ground = GameObject.Find("Simulation_Ground_Plaza");
             if (ground == null)
             {
                 ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
                 ground.name = "Simulation_Ground_Plaza";
-                ground.transform.position = new Vector3(-200.0f, 0.5f, -200.0f);
-                ground.transform.localScale = new Vector3(80f, 1f, 80f); // 800m x 800m
+                ground.transform.position = new Vector3(-200.0f, 4.60f, 200.0f);
+                ground.transform.localScale = new Vector3(80f, 1f, 80f);
 
                 Renderer gr = ground.GetComponent<Renderer>();
                 if (gr != null)
                 {
                     gr.material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
-                    gr.material.color = new Color(0.82f, 0.80f, 0.76f); // Tono concreto plaza Uniguajira
+                    gr.material.color = new Color(0.82f, 0.80f, 0.76f);
                 }
             }
         }
@@ -153,6 +279,11 @@ namespace Uniguajira.Simulation
             currentAgentIdCounter = 0;
             currentSliceIndex = 0;
             generatedInCurrentSlice = 0;
+
+            foreach (var cr in registeredClassrooms)
+            {
+                cr.currentOccupants = 0;
+            }
 
             foreach (var a in activeAgents)
             {
@@ -197,16 +328,15 @@ namespace Uniguajira.Simulation
 
         private void SpawnAgent()
         {
-            if (registeredOffices.Count == 0) return;
-
             currentAgentIdCounter++;
 
+            // Selección de acceso según escenario
             float mainDoorProb = (activeScenario == SimulationScenario.EscenarioBase) ? 0.80f : 0.50f;
             bool spawnAtMain = UnityEngine.Random.value <= mainDoorProb;
             Transform spawnPoint = spawnAtMain ? mainEntranceDoor : (backEntranceDoor != null ? backEntranceDoor : mainEntranceDoor);
             string doorName = spawnAtMain ? "Puerta Principal" : "Puerta Trasera";
 
-            Vector3 spawnPos = (spawnPoint != null) ? spawnPoint.position : new Vector3(-11.7f, 1.1f, -195.0f);
+            Vector3 spawnPos = (spawnPoint != null) ? spawnPoint.position : new Vector3(-230.0f, 5.0f, 115.0f);
             Quaternion spawnRot = (spawnPoint != null) ? spawnPoint.rotation : Quaternion.identity;
             spawnPos += new Vector3(UnityEngine.Random.Range(-1.5f, 1.5f), 0, UnityEngine.Random.Range(-1.5f, 1.5f));
 
@@ -219,18 +349,200 @@ namespace Uniguajira.Simulation
             {
                 agentObj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
                 agentObj.transform.position = spawnPos;
-                agentObj.transform.localScale = new Vector3(1.4f, 1.3f, 1.4f);
+                agentObj.transform.localScale = new Vector3(1.3f, 1.25f, 1.3f);
             }
 
-            agentObj.name = $"Estudiante_{currentAgentIdCounter}";
             AgentPedestrian agent = agentObj.GetComponent<AgentPedestrian>();
             if (agent == null) agent = agentObj.AddComponent<AgentPedestrian>();
 
-            ServiceOffice office = SelectDestinationOffice();
+            // Asignación de Rol
+            // ~70% Estudiantes, ~15% Docentes, ~15% Funcionarios
+            float rollRole = UnityEngine.Random.value;
+            AgentRole role = rollRole < 0.70f ? AgentRole.Estudiante : (rollRole < 0.85f ? AgentRole.Docente : AgentRole.Funcionario);
+
+            // Determinación de destino:
+            // Estudiantes: 85% van a salones de clase (Piso 1 o 2), 15% a trámites en oficinas
+            // Docentes: 100% van a salones de clase
+            // Funcionarios: 100% van a oficinas administrativas
+            bool goToClassroom = false;
+            if (role == AgentRole.Estudiante)
+            {
+                goToClassroom = (registeredClassrooms.Count > 0) && (UnityEngine.Random.value < 0.85f || registeredOffices.Count == 0);
+            }
+            else if (role == AgentRole.Docente)
+            {
+                goToClassroom = (registeredClassrooms.Count > 0);
+            }
+            else // Funcionario
+            {
+                goToClassroom = (registeredOffices.Count == 0);
+            }
+
             Transform exitPoint = spawnPoint;
 
-            agent.Initialize(currentAgentIdCounter, doorName, office, exitPoint);
+            if (goToClassroom && registeredClassrooms.Count > 0)
+            {
+                // Elegir un salón aleatorio o con menor ocupación
+                ClassroomData classroom = registeredClassrooms[UnityEngine.Random.Range(0, registeredClassrooms.Count)];
+                agentObj.name = $"{role}_{currentAgentIdCounter}_{classroom.classroomName.Replace(" ", "_")}";
+
+                List<Vector3> path = CalculatePath(spawnPos, classroom, null);
+                agent.InitializeClassroomAgent(currentAgentIdCounter, role, doorName, classroom, path, exitPoint);
+            }
+            else
+            {
+                ServiceOffice office = SelectDestinationOffice();
+                agentObj.name = $"{role}_{currentAgentIdCounter}_{office.officeName.Replace(" ", "_")}";
+
+                List<Vector3> path = CalculatePath(spawnPos, null, office);
+                agent.InitializeOfficeAgent(currentAgentIdCounter, role, doorName, office, path, exitPoint);
+            }
+
             activeAgents.Add(agent);
+        }
+
+        public List<Vector3> CalculatePath(Vector3 startPos, ClassroomData classroom, ServiceOffice office)
+        {
+            List<Vector3> path = new List<Vector3>();
+            int destFloor = (classroom != null) ? classroom.floorLevel : (office != null ? office.floorLevel : 1);
+            bool isNorth = (classroom != null) ? classroom.isNorthWing : (office == null || office.transform.position.z < 200f);
+            Vector3 finalDest = (classroom != null) ? classroom.doorPosition : (office.queueStartPoint != null ? office.queueStartPoint.position : office.transform.position);
+            Vector3 finalHallway = (classroom != null) ? classroom.hallwayPoint : (isNorth ? new Vector3(finalDest.x, (destFloor == 1 ? 4.71f : 61.91f), 52.0f) : new Vector3(finalDest.x, (destFloor == 1 ? 4.71f : 61.91f), 418.0f));
+
+            bool isSpawningAtMain = (startPos.x < 0);
+
+            if (isSpawningAtMain)
+            {
+                // Viene desde la plaza principal exterior
+                path.Add(PosPlazaEntrance + RandomJitter());
+                path.Add(PosCourtyardWest + RandomJitter());
+
+                if (destFloor == 1)
+                {
+                    // Piso 1: Dirigirse al pasillo Norte o Sur
+                    float corridorZ = isNorth ? 52.0f : 418.0f;
+                    path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
+                    path.Add(finalHallway + RandomJitter());
+                    // Punto final frente a la puerta del salón
+                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
+                    path.Add(stepIn);
+                }
+                else
+                {
+                    // Piso 2: Cruzar patio y subir la escalera monumental
+                    path.Add(PosCourtyardEast + RandomJitter());
+                    AddStaircaseAscent(path);
+
+                    // Pasillo de piso 2
+                    float corridorZ = isNorth ? 52.0f : 418.0f;
+                    path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
+                    path.Add(finalHallway + RandomJitter());
+
+                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
+                    path.Add(stepIn);
+                }
+            }
+            else
+            {
+                // Viene desde Puerta Trasera (este del bloque)
+                path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
+
+                if (destFloor == 1)
+                {
+                    float corridorZ = isNorth ? 52.0f : 418.0f;
+                    path.Add(new Vector3(430.0f, 4.71f, corridorZ) + RandomJitter());
+                    path.Add(finalHallway + RandomJitter());
+                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
+                    path.Add(stepIn);
+                }
+                else
+                {
+                    AddStaircaseAscent(path);
+                    float corridorZ = isNorth ? 52.0f : 418.0f;
+                    path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
+                    path.Add(finalHallway + RandomJitter());
+                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
+                    path.Add(stepIn);
+                }
+            }
+
+            return path;
+        }
+
+        public List<Vector3> CalculateExitPath(Vector3 currentPos, ClassroomData classroom, ServiceOffice office, Vector3 exitTarget)
+        {
+            List<Vector3> path = new List<Vector3>();
+            int currentFloor = currentPos.y > 30.0f ? 2 : 1;
+            bool isNorth = (classroom != null) ? classroom.isNorthWing : (office == null || currentPos.z < 200f);
+            bool exitViaMain = (exitTarget.x < 100);
+
+            float corridorZ = isNorth ? 52.0f : 418.0f;
+            float floorY = (currentFloor == 1) ? 4.71f : 61.91f;
+
+            // 1. Salir del salón hacia el centro del pasillo
+            path.Add(new Vector3(currentPos.x, floorY, corridorZ) + RandomJitter());
+
+            if (currentFloor == 2)
+            {
+                // Caminar hacia la escalera de bajada
+                path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
+                path.Add(StairExitFloor2);
+
+                // Bajar la escalera
+                AddStaircaseDescent(path);
+
+                path.Add(PosCourtyardEast + RandomJitter());
+            }
+
+            if (exitViaMain)
+            {
+                if (currentFloor == 1)
+                {
+                    path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
+                }
+                path.Add(PosCourtyardWest + RandomJitter());
+                path.Add(PosPlazaEntrance + RandomJitter());
+                path.Add(exitTarget);
+            }
+            else
+            {
+                // Salida por Puerta Trasera
+                path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
+                path.Add(exitTarget);
+            }
+
+            return path;
+        }
+
+        private void AddStaircaseAscent(List<Vector3> path)
+        {
+            path.Add(StairBottom);
+            path.Add(StairMid1);
+            path.Add(StairLanding1);
+            path.Add(StairLanding2);
+            path.Add(StairMid2);
+            path.Add(StairTop);
+            path.Add(StairExitFloor2);
+        }
+
+        private void AddStaircaseDescent(List<Vector3> path)
+        {
+            path.Add(StairTop);
+            path.Add(StairMid2);
+            path.Add(StairLanding2);
+            path.Add(StairLanding1);
+            path.Add(StairMid1);
+            path.Add(StairBottom);
+        }
+
+        private Vector3 RandomJitter()
+        {
+            return new Vector3(UnityEngine.Random.Range(-0.8f, 0.8f), 0, UnityEngine.Random.Range(-0.8f, 0.8f));
+        }
+
+        public Vector3 GetDefaultExitPosition()
+        {
+            return mainEntranceDoor != null ? mainEntranceDoor.position : new Vector3(-230.0f, 5.0f, 115.0f);
         }
 
         private ServiceOffice SelectDestinationOffice()
@@ -336,15 +648,15 @@ namespace Uniguajira.Simulation
             GUI.Box(new Rect(bannerX, 10, bannerW, 35), "");
             GUI.Label(new Rect(bannerX, 15, bannerW, 25), $"<color=yellow><b>VISTA DE CÁMARA:</b> {camName}</color>", new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter });
 
-            // Panel Izquierdo: Simulación y Estadísticas
-            float leftPanelW = Mathf.Min(440f, Screen.width * 0.45f);
-            GUI.Box(new Rect(10, 10, leftPanelW, 490), "");
-            GUILayout.BeginArea(new Rect(20, 15, leftPanelW - 20, 480));
+            // Panel Izquierdo: Simulación y Estadísticas de Salones
+            float leftPanelW = Mathf.Min(470f, Screen.width * 0.45f);
+            GUI.Box(new Rect(10, 10, leftPanelW, 510), "");
+            GUILayout.BeginArea(new Rect(20, 15, leftPanelW - 20, 500));
 
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold };
             GUILayout.Label("UNIGUAJIRA · BLOQUE ADMINISTRATIVO A", titleStyle);
-            GUILayout.Label("Simulación de Eventos Discretos · Semana 14", GUI.skin.label);
-            GUILayout.Space(3);
+            GUILayout.Label("Simulación de Clases y Trámites · Semana 14", GUI.skin.label);
+            GUILayout.Space(2);
 
             // Reloj de Simulación
             float elapsedSimSec = (Time.time - simulationStartTime);
@@ -361,11 +673,46 @@ namespace Uniguajira.Simulation
 
             string currentFranja = (currentSliceIndex < intervalNames.Length) ? intervalNames[currentSliceIndex] : "Finalizado";
             int expectedSlice = (currentSliceIndex < arrivalsPerTenMin.Length) ? arrivalsPerTenMin[currentSliceIndex] : 0;
-            GUILayout.Label($"<b>Franja:</b> {currentFranja} ({generatedInCurrentSlice}/{expectedSlice} est.)");
-            GUILayout.Label($"<b>Llegadas:</b> {currentAgentIdCounter}/66 | <b>En Cola:</b> {activeAgents.Count} | <b>Listos:</b> {completedMetrics.Count}");
-            GUILayout.Space(4);
+            GUILayout.Label($"<b>Franja:</b> {currentFranja} ({generatedInCurrentSlice}/{expectedSlice} agentes)");
 
-            GUILayout.Label("<b>OFICINAS Y FILAS DE ESPERA:</b>");
+            int inClassCount = 0;
+            int exitingCount = 0;
+            int walkingCount = 0;
+            foreach (var a in activeAgents)
+            {
+                if (a == null) continue;
+                if (a.currentState == AgentPedestrian.AgentState.InClass) inClassCount++;
+                else if (a.currentState == AgentPedestrian.AgentState.Exiting) exitingCount++;
+                else walkingCount++;
+            }
+
+            GUILayout.Label($"<b>Activos:</b> {activeAgents.Count} (Clase: <color=yellow>{inClassCount}</color> | Tránsito: {walkingCount} | Saliendo: <color=cyan>{exitingCount}</color>)");
+            GUILayout.Label($"<b>Llegadas:</b> {currentAgentIdCounter}/66 | <b>Completados:</b> {completedMetrics.Count}");
+            GUILayout.Space(3);
+
+            // Resumen de Ocupación por Pisos y Salones
+            int occF1N = 0, occF1S = 0, occF2N = 0, occF2S = 0;
+            foreach (var cr in registeredClassrooms)
+            {
+                if (cr.floorLevel == 1)
+                {
+                    if (cr.isNorthWing) occF1N += cr.currentOccupants;
+                    else occF1S += cr.currentOccupants;
+                }
+                else
+                {
+                    if (cr.isNorthWing) occF2N += cr.currentOccupants;
+                    else occF2S += cr.currentOccupants;
+                }
+            }
+
+            GUILayout.Label("<b>OCUPACIÓN DE AULAS POR ALA Y PISO:</b>");
+            GUILayout.Label($"• <b>Piso 1:</b> Norte (101-105): <b>{occF1N}</b> est. | Sur (106-109): <b>{occF1S}</b> est.");
+            GUILayout.Label($"• <b>Piso 2:</b> Norte (201-205): <b>{occF2N}</b> est. | Sur (206-209): <b>{occF2S}</b> est.");
+            GUILayout.Space(3);
+
+            // Oficinas y Trámites
+            GUILayout.Label("<b>OFICINAS DE SERVICIO:</b>");
             foreach (var off in registeredOffices)
             {
                 if (off != null)
@@ -376,32 +723,11 @@ namespace Uniguajira.Simulation
             }
             GUILayout.Space(4);
 
-            float curAvgTravel = 0, curAvgWait = 0, curAvgService = 0, curAvgTotal = 0;
-            if (completedMetrics.Count > 0)
-            {
-                foreach (var m in completedMetrics)
-                {
-                    curAvgTravel += m.TravelTime;
-                    curAvgWait += m.WaitTime;
-                    curAvgService += m.ServiceTime;
-                    curAvgTotal += m.TotalSystemTime;
-                }
-                int cnt = completedMetrics.Count;
-                curAvgTravel = (curAvgTravel / cnt) / 60f;
-                curAvgWait = (curAvgWait / cnt) / 60f;
-                curAvgService = (curAvgService / cnt) / 60f;
-                curAvgTotal = (curAvgTotal / cnt) / 60f;
-            }
-
-            GUILayout.Label("<b>TIEMPOS PROMEDIO (MINUTOS):</b>");
-            GUILayout.Label($"Recorrido: {curAvgTravel:F2}m | Espera: <b>{curAvgWait:F2}m</b> | Total: {curAvgTotal:F2}m");
-            GUILayout.Space(6);
-
             string btnScenarioText = (activeScenario == SimulationScenario.EscenarioBase)
                 ? "Cambiar a Escenario Alternativo (+1 ORI)"
                 : "Cambiar a Escenario Base (1 Servidor ORI)";
 
-            if (GUILayout.Button(btnScenarioText, GUILayout.Height(26)))
+            if (GUILayout.Button(btnScenarioText, GUILayout.Height(24)))
             {
                 activeScenario = (activeScenario == SimulationScenario.EscenarioBase)
                     ? SimulationScenario.EscenarioAlternativo
@@ -423,14 +749,13 @@ namespace Uniguajira.Simulation
             GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Reiniciar")) StartSimulation();
-            if (GUILayout.Button("5 Réplicas")) StartCoroutine(RunFiveReplicasRoutine());
+            if (GUILayout.Button("Reiniciar Simulación")) StartSimulation();
             if (GUILayout.Button("Exportar CSV")) ExportResultsToCSV();
             GUILayout.EndHorizontal();
 
             GUILayout.EndArea();
 
-            // Panel Derecho: Selector de Cámaras (Diseño Compacto y Separado)
+            // Panel Derecho: Selector de Cámaras (Diseño Compacto)
             float rightPanelW = 230f;
             float rightPanelX = Screen.width - rightPanelW - 10f;
             GUI.Box(new Rect(rightPanelX, 10, rightPanelW, 290), "");
@@ -480,27 +805,6 @@ namespace Uniguajira.Simulation
         {
             timeScale = ts;
             Time.timeScale = ts;
-        }
-
-        private IEnumerator RunFiveReplicasRoutine()
-        {
-            replicaHistory.Clear();
-            float oldScale = Time.timeScale;
-            Time.timeScale = 25f;
-
-            for (int r = 1; r <= 5; r++)
-            {
-                currentReplicaNumber = r;
-                StartSimulation();
-                while (isRunning)
-                {
-                    yield return new WaitForSeconds(0.2f);
-                }
-                yield return new WaitForSeconds(0.5f);
-            }
-
-            Time.timeScale = oldScale;
-            Debug.Log("¡5 Réplicas completadas y exportadas a CSV con éxito!");
         }
     }
 }

@@ -3,6 +3,19 @@ using UnityEngine;
 
 namespace Uniguajira.Simulation
 {
+    public enum AgentRole
+    {
+        Estudiante,
+        Docente,
+        Funcionario
+    }
+
+    public enum AgentDestinationType
+    {
+        Classroom,
+        ServiceOffice
+    }
+
     public enum OfficeType
     {
         VicerrectoriaExtension,   // Piso 1
@@ -19,19 +32,40 @@ namespace Uniguajira.Simulation
     }
 
     [Serializable]
+    public class ClassroomData
+    {
+        public string doorName;        // e.g. "Door_GF_N1"
+        public string classroomName;   // e.g. "Aula 101 Norte"
+        public int floorLevel;         // 1 or 2
+        public bool isNorthWing;       // true = North (Z < 100), false = South (Z > 300)
+        public Vector3 doorPosition;   // World position of the door
+        public Vector3 hallwayPoint;   // Position on corridor centerline in front of door
+        public int currentOccupants;   // Count of agents currently inside or at door
+    }
+
+    [Serializable]
     public class AgentMetrics
     {
         public int agentId;
+        public AgentRole role = AgentRole.Estudiante;
+        public AgentDestinationType destinationType = AgentDestinationType.Classroom;
         public string entranceDoor;
-        public OfficeType destination;
+        public string destinationName;
+        public int floorLevel;
+        public OfficeType officeDestination;
         public float spawnTime;
-        public float reachQueueTime;
+        public float reachDestinationTime;
+        public float reachQueueTime
+        {
+            get => reachDestinationTime;
+            set => reachDestinationTime = value;
+        }
         public float serviceStartTime;
         public float serviceEndTime;
         public float exitTime;
 
-        public float TravelTime => reachQueueTime - spawnTime;
-        public float WaitTime => serviceStartTime - reachQueueTime;
+        public float TravelTime => reachDestinationTime - spawnTime;
+        public float WaitTime => serviceStartTime - reachDestinationTime;
         public float ServiceTime => serviceEndTime - serviceStartTime;
         public float TotalSystemTime => exitTime - spawnTime;
     }

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
@@ -9,44 +10,50 @@ namespace Uniguajira.Simulation
         public enum AgentState
         {
             Spawning,
-            WalkingToOffice,
+            WalkingToDestination,
+            InClass,
             InQueue,
             BeingServed,
             Exiting,
             Done
         }
 
-        [Header("Estado y Métricas")]
+        [Header("Estado y Perfil")]
         public AgentState currentState = AgentState.Spawning;
+        public AgentRole role = AgentRole.Estudiante;
+        public AgentDestinationType destinationType = AgentDestinationType.Classroom;
         public AgentMetrics metrics = new AgentMetrics();
 
         [Header("Configuración de Movimiento")]
-        public float walkSpeed = 6.0f; // Escala proporcional a dimensiones del modelo
-        public float angularSpeed = 360f;
-        public float stoppingDistance = 1.0f;
+        public float walkSpeed = 6.5f;
+        public float angularSpeed = 400f;
+        public float stoppingDistance = 1.2f;
 
         private NavMeshAgent navAgent;
+        private ClassroomData targetClassroom;
         private ServiceOffice targetOffice;
         private Transform exitPoint;
         private Vector3 currentTargetPosition;
 
-        // Rutas y Waypoints para cambio de piso
+        // Cola de waypoints para navegación precisa por pasillos y escaleras
         private readonly Queue<Vector3> waypointQueue = new Queue<Vector3>();
         private bool hasWaypoints = false;
 
         // Visuales
+        private Transform visualTransform;
         private Renderer bodyRenderer;
         private TextMesh overheadLabel;
         private float bobbingTimer = 0f;
-        private Vector3 baseVisualPosition;
-
-        // Waypoints de la escalera monumental
-        private static readonly Vector3 StairBottom = new Vector3(-385.0f, 1.1f, -200.0f);
-        private static readonly Vector3 StairLanding = new Vector3(-400.0f, 29.7f, -170.0f);
-        private static readonly Vector3 StairTop = new Vector3(-415.0f, 58.3f, -200.0f);
+        private Color baseRoleColor = new Color(0.2f, 0.65f, 1.0f);
 
         private void Awake()
         {
+            Collider rootCol = GetComponent<Collider>();
+            if (rootCol != null)
+            {
+                rootCol.isTrigger = true;
+            }
+
             navAgent = GetComponent<NavMeshAgent>();
             if (navAgent != null)
             {
@@ -60,34 +67,44 @@ namespace Uniguajira.Simulation
 
         private void SetupVisualComponents()
         {
-            bodyRenderer = GetComponentInChildren<Renderer>();
-            if (bodyRenderer == null)
+            // Separar visual del root para permitir bobbing independiente de la altura Y
+            MeshRenderer rootRend = GetComponent<MeshRenderer>();
+            MeshFilter rootMf = GetComponent<MeshFilter>();
+            if (rootRend != null) Destroy(rootRend);
+            if (rootMf != null) Destroy(rootMf);
+
+            Transform existingVisual = transform.Find("AgentVisual");
+            if (existingVisual == null)
             {
-                // Crear cápsula visual si no existe
                 GameObject capsule = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                capsule.name = "AgentVisual";
                 capsule.transform.SetParent(transform);
                 capsule.transform.localPosition = new Vector3(0, 1.25f, 0);
-                capsule.transform.localScale = new Vector3(1.4f, 1.25f, 1.4f);
+                capsule.transform.localScale = new Vector3(1.3f, 1.25f, 1.3f);
+                visualTransform = capsule.transform;
                 bodyRenderer = capsule.GetComponent<Renderer>();
 
                 Collider col = capsule.GetComponent<Collider>();
                 if (col != null) Destroy(col);
             }
+            else
+            {
+                visualTransform = existingVisual;
+                bodyRenderer = existingVisual.GetComponent<Renderer>();
+            }
 
-            // Material independiente por agente
             if (bodyRenderer != null)
             {
                 bodyRenderer.material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
-                SetColor(new Color(0.2f, 0.6f, 1.0f)); // Azul estudiante inicial
             }
 
-            // Etiqueta flotante
+            // Etiqueta flotante 3D
             Transform existingLabel = transform.Find("AgentLabel");
             if (existingLabel == null)
             {
                 GameObject labelObj = new GameObject("AgentLabel");
                 labelObj.transform.SetParent(transform);
-                labelObj.transform.localPosition = new Vector3(0, 3.2f, 0);
+                labelObj.transform.localPosition = new Vector3(0, 3.4f, 0);
 
                 overheadLabel = labelObj.AddComponent<TextMesh>();
                 overheadLabel.fontSize = 20;
@@ -102,50 +119,90 @@ namespace Uniguajira.Simulation
             }
         }
 
-        public void Initialize(int id, string doorName, ServiceOffice office, Transform exit)
+        public void InitializeClassroomAgent(int id, AgentRole agentRole, string doorName, ClassroomData classroom, List<Vector3> pathWaypoints, Transform exit)
         {
+            role = agentRole;
+            destinationType = AgentDestinationType.Classroom;
+            targetClassroom = classroom;
+            targetOffice = null;
+            exitPoint = exit;
+
             metrics.agentId = id;
+            metrics.role = agentRole;
+            metrics.destinationType = AgentDestinationType.Classroom;
             metrics.entranceDoor = doorName;
-            metrics.destination = office.officeType;
+            metrics.destinationName = classroom.classroomName;
+            metrics.floorLevel = classroom.floorLevel;
             metrics.spawnTime = Time.time;
 
-            targetOffice = office;
-            exitPoint = exit;
+            // Colores por rol
+            if (role == AgentRole.Estudiante)
+            {
+                baseRoleColor = new Color(0.2f, 0.65f, 1.0f); // Azul estudiante
+            }
+            else if (role == AgentRole.Docente)
+            {
+                baseRoleColor = new Color(0.1f, 0.85f, 0.55f); // Verde azulado docente
+            }
+            else
+            {
+                baseRoleColor = new Color(1.0f, 0.55f, 0.1f); // Naranja funcionario
+            }
+            SetColor(baseRoleColor);
 
             if (overheadLabel != null)
             {
-                overheadLabel.text = $"#{id} [{office.officeName.Replace("_", " ")}]";
+                string roleTag = role == AgentRole.Estudiante ? "Est." : (role == AgentRole.Docente ? "Prof." : "Func.");
+                overheadLabel.text = $"[{roleTag} #{id}]\n► {classroom.classroomName}";
             }
 
-            currentState = AgentState.WalkingToOffice;
-            SetColor(new Color(0.2f, 0.6f, 1.0f)); // Azul de camino a oficina
-
-            Vector3 finalDest = targetOffice.queueStartPoint != null ? targetOffice.queueStartPoint.position : targetOffice.transform.position;
-            NavigateTo(finalDest, office.floorLevel);
+            LoadWaypoints(pathWaypoints);
+            currentState = AgentState.WalkingToDestination;
         }
 
-        private void NavigateTo(Vector3 destination, int destinationFloor)
+        public void InitializeOfficeAgent(int id, AgentRole agentRole, string doorName, ServiceOffice office, List<Vector3> pathWaypoints, Transform exit)
+        {
+            role = agentRole;
+            destinationType = AgentDestinationType.ServiceOffice;
+            targetOffice = office;
+            targetClassroom = null;
+            exitPoint = exit;
+
+            metrics.agentId = id;
+            metrics.role = agentRole;
+            metrics.destinationType = AgentDestinationType.ServiceOffice;
+            metrics.entranceDoor = doorName;
+            metrics.destinationName = office.officeName;
+            metrics.officeDestination = office.officeType;
+            metrics.floorLevel = office.floorLevel;
+            metrics.spawnTime = Time.time;
+
+            baseRoleColor = (role == AgentRole.Funcionario)
+                ? new Color(1.0f, 0.55f, 0.1f)
+                : new Color(0.2f, 0.65f, 1.0f);
+            SetColor(baseRoleColor);
+
+            if (overheadLabel != null)
+            {
+                string roleTag = (role == AgentRole.Funcionario) ? "Func." : "Est.";
+                overheadLabel.text = $"[{roleTag} #{id}]\n► {office.officeName}";
+            }
+
+            LoadWaypoints(pathWaypoints);
+            currentState = AgentState.WalkingToDestination;
+        }
+
+        private void LoadWaypoints(List<Vector3> waypoints)
         {
             waypointQueue.Clear();
-
-            int currentFloor = transform.position.y > 30.0f ? 2 : 1;
-
-            // Si hay cambio de piso, planear camino por la escalera
-            if (currentFloor == 1 && destinationFloor == 2)
+            if (waypoints != null)
             {
-                waypointQueue.Enqueue(StairBottom);
-                waypointQueue.Enqueue(StairLanding);
-                waypointQueue.Enqueue(StairTop);
+                foreach (var wp in waypoints)
+                {
+                    waypointQueue.Enqueue(wp);
+                }
             }
-            else if (currentFloor == 2 && destinationFloor == 1)
-            {
-                waypointQueue.Enqueue(StairTop);
-                waypointQueue.Enqueue(StairLanding);
-                waypointQueue.Enqueue(StairBottom);
-            }
-
-            waypointQueue.Enqueue(destination);
-            hasWaypoints = true;
+            hasWaypoints = (waypointQueue.Count > 0);
             AdvanceNextWaypoint();
         }
 
@@ -179,10 +236,10 @@ namespace Uniguajira.Simulation
         private void Update()
         {
             UpdateOverheadRotation();
-            HandleKinematicMovement();
+            HandleMovement();
 
-            // Comportamiento según estado
-            if (currentState == AgentState.WalkingToOffice)
+            // Lógica de transición de estados
+            if (currentState == AgentState.WalkingToDestination)
             {
                 if (HasReachedTarget())
                 {
@@ -192,9 +249,22 @@ namespace Uniguajira.Simulation
                     }
                     else
                     {
-                        currentState = AgentState.InQueue;
-                        SetColor(new Color(1f, 0.75f, 0.1f)); // Amarillo en cola
-                        targetOffice.EnqueueAgent(this);
+                        // Ha llegado a la puerta del salón o a la oficina
+                        metrics.reachDestinationTime = Time.time;
+
+                        if (destinationType == AgentDestinationType.Classroom)
+                        {
+                            StartCoroutine(AttendClassRoutine());
+                        }
+                        else
+                        {
+                            currentState = AgentState.InQueue;
+                            SetColor(new Color(1f, 0.75f, 0.1f)); // Amarillo en cola
+                            if (targetOffice != null)
+                            {
+                                targetOffice.EnqueueAgent(this);
+                            }
+                        }
                     }
                 }
             }
@@ -208,6 +278,7 @@ namespace Uniguajira.Simulation
                     }
                     else
                     {
+                        // Llegó a la puerta de salida exterior
                         currentState = AgentState.Done;
                         metrics.exitTime = Time.time;
                         SimulationManager.Instance.OnAgentExit(this);
@@ -217,19 +288,70 @@ namespace Uniguajira.Simulation
             }
         }
 
-        private void HandleKinematicMovement()
+        private IEnumerator AttendClassRoutine()
         {
-            // Movimiento híbrido cuando NavMesh no está activo o se cruzan desniveles
+            currentState = AgentState.InClass;
+            SetColor(new Color(1.0f, 0.85f, 0.2f)); // Amarillo/Dorado en clase
+
+            if (targetClassroom != null)
+            {
+                targetClassroom.currentOccupants++;
+            }
+
+            if (overheadLabel != null && targetClassroom != null)
+            {
+                string tag = (role == AgentRole.Docente) ? "[Dictando Clase]" : "[En Clase]";
+                overheadLabel.text = $"{tag}\n{targetClassroom.classroomName}";
+            }
+
+            metrics.serviceStartTime = Time.time;
+
+            // Duración de la clase: entre 8 y 22 segundos de simulación según el perfil
+            float classDuration = (role == AgentRole.Docente)
+                ? Random.Range(14.0f, 24.0f)
+                : Random.Range(8.0f, 18.0f);
+
+            yield return new WaitForSeconds(classDuration);
+
+            metrics.serviceEndTime = Time.time;
+
+            // Iniciar salida del salón hacia el exterior
+            StartExiting();
+        }
+
+        public void StartExiting()
+        {
+            currentState = AgentState.Exiting;
+            SetColor(new Color(0.6f, 0.65f, 0.7f)); // Gris saliendo
+
+            if (targetClassroom != null)
+            {
+                targetClassroom.currentOccupants = Mathf.Max(0, targetClassroom.currentOccupants - 1);
+            }
+
+            if (overheadLabel != null)
+            {
+                overheadLabel.text = "[Saliendo]\nSalida";
+            }
+
+            Vector3 exitPos = (exitPoint != null) ? exitPoint.position : SimulationManager.Instance.GetDefaultExitPosition();
+            List<Vector3> exitWaypoints = SimulationManager.Instance.CalculateExitPath(transform.position, targetClassroom, targetOffice, exitPos);
+
+            LoadWaypoints(exitWaypoints);
+        }
+
+        private void HandleMovement()
+        {
             bool useNavMesh = (navAgent != null && navAgent.isActiveAndEnabled && navAgent.isOnNavMesh);
 
-            if (!useNavMesh && (currentState == AgentState.WalkingToOffice || currentState == AgentState.Exiting || currentState == AgentState.InQueue))
+            if (!useNavMesh && (currentState == AgentState.WalkingToDestination || currentState == AgentState.Exiting || currentState == AgentState.InQueue))
             {
                 Vector3 toTarget = currentTargetPosition - transform.position;
                 float dist = toTarget.magnitude;
 
                 if (dist > 0.2f)
                 {
-                    // Rotar hacia el destino
+                    // Rotación suave hacia el waypoint
                     Vector3 forwardDir = new Vector3(toTarget.x, 0, toTarget.z);
                     if (forwardDir.sqrMagnitude > 0.001f)
                     {
@@ -237,16 +359,15 @@ namespace Uniguajira.Simulation
                         transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRot, angularSpeed * Time.deltaTime);
                     }
 
-                    // Avanzar hacia el destino
+                    // Avance suave
                     transform.position = Vector3.MoveTowards(transform.position, currentTargetPosition, walkSpeed * Time.deltaTime);
 
-                    // Efecto de caminado (bobbing)
+                    // Efecto de caminado (bobbing natural)
                     bobbingTimer += Time.deltaTime * 8.0f;
                     float bob = Mathf.Sin(bobbingTimer) * 0.1f;
-                    if (bodyRenderer != null)
+                    if (visualTransform != null)
                     {
-                        Vector3 lp = bodyRenderer.transform.localPosition;
-                        bodyRenderer.transform.localPosition = new Vector3(lp.x, 1.25f + bob, lp.z);
+                        visualTransform.localPosition = new Vector3(0, 1.25f + bob, 0);
                     }
                 }
             }
@@ -260,24 +381,25 @@ namespace Uniguajira.Simulation
             }
             else
             {
-                return Vector3.Distance(transform.position, currentTargetPosition) <= (stoppingDistance * 1.5f);
+                float xzDist = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(currentTargetPosition.x, currentTargetPosition.z));
+                float yDist = Mathf.Abs(transform.position.y - currentTargetPosition.y);
+                return xzDist <= (stoppingDistance * 1.5f) && yDist <= 6.0f;
             }
         }
 
         public void SetBeingServedState()
         {
             currentState = AgentState.BeingServed;
-            SetColor(new Color(0.1f, 0.9f, 0.2f)); // Verde siendo atendido
+            SetColor(new Color(0.15f, 0.95f, 0.35f)); // Verde siendo atendido
+            if (overheadLabel != null && targetOffice != null)
+            {
+                overheadLabel.text = $"[En Atención]\n{targetOffice.officeName}";
+            }
         }
 
         public void OnServiceCompleted()
         {
-            currentState = AgentState.Exiting;
-            SetColor(new Color(0.6f, 0.6f, 0.6f)); // Gris saliendo
-
-            Vector3 exitPos = exitPoint != null ? exitPoint.position : StairBottom;
-            int exitFloor = (exitPoint != null && exitPoint.position.y > 30f) ? 2 : 1;
-            NavigateTo(exitPos, exitFloor);
+            StartExiting();
         }
 
         private void SetColor(Color col)
@@ -292,7 +414,12 @@ namespace Uniguajira.Simulation
         {
             if (overheadLabel != null && Camera.main != null)
             {
-                overheadLabel.transform.rotation = Quaternion.LookRotation(overheadLabel.transform.position - Camera.main.transform.position);
+                Vector3 camPos = Camera.main.transform.position;
+                Vector3 dir = overheadLabel.transform.position - camPos;
+                if (dir.sqrMagnitude > 0.01f)
+                {
+                    overheadLabel.transform.rotation = Quaternion.LookRotation(dir);
+                }
             }
         }
     }

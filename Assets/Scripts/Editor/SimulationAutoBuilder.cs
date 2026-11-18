@@ -107,20 +107,20 @@ namespace Uniguajira.Simulation.Editor
             {
                 GameObject md = new GameObject("Puerta_Principal");
                 md.transform.SetParent(accessContainer.transform);
-                md.transform.position = new Vector3(-11.7f, 1.1f, -195.0f);
-                md.transform.rotation = Quaternion.Euler(0, 90f, 0);
                 mainDoor = md.transform;
             }
+            mainDoor.position = new Vector3(-230.0f, 5.0f, 115.0f);
+            mainDoor.rotation = Quaternion.Euler(0, 73f, 0);
 
             Transform backDoor = accessContainer.transform.Find("Puerta_Trasera");
             if (backDoor == null)
             {
                 GameObject bd = new GameObject("Puerta_Trasera");
                 bd.transform.SetParent(accessContainer.transform);
-                bd.transform.position = new Vector3(-470.0f, 1.1f, -239.0f);
-                bd.transform.rotation = Quaternion.Euler(0, -90f, 0);
                 backDoor = bd.transform;
             }
+            backDoor.position = new Vector3(460.0f, 5.0f, 200.0f);
+            backDoor.rotation = Quaternion.Euler(0, -90f, 0);
 
             // 5. Configurar SimulationManager
             GameObject mgrObj = GameObject.Find("SimulationManager");
@@ -139,23 +139,23 @@ namespace Uniguajira.Simulation.Editor
 
             // Piso 1: Vicerrectoría Extensión (3.5 min, 2 servidores)
             CreateOffice(officesContainer.transform, simMgr, OfficeType.VicerrectoriaExtension,
-                "Vicerrectoria_Extension", new Vector3(-150.0f, 1.1f, -25.0f), 1, 2, 3.5f, 0.8f);
+                "Vicerrectoria_Extension", new Vector3(150.0f, 4.71f, -15.0f), 1, 2, 3.5f, 0.8f);
 
             // Piso 1: Facultad Ciencias Aplicadas (4.0 min, 2 servidores)
             CreateOffice(officesContainer.transform, simMgr, OfficeType.CienciasAplicadas,
-                "Facultad_Ciencias_Aplicadas", new Vector3(-220.0f, 1.1f, -25.0f), 1, 2, 4.0f, 1.0f);
+                "Facultad_Ciencias_Aplicadas", new Vector3(200.0f, 4.71f, -15.0f), 1, 2, 4.0f, 1.0f);
 
             // Piso 2: Oficina de Relaciones Internacionales ORI (3.0 min, 1 servidor en Base)
             CreateOffice(officesContainer.transform, simMgr, OfficeType.ORI,
-                "Oficina_ORI", new Vector3(-150.0f, 58.3f, -25.0f), 2, 1, 3.0f, 0.6f);
+                "Oficina_ORI", new Vector3(190.0f, 61.91f, 75.0f), 2, 1, 3.0f, 0.6f);
 
             // Piso 2: Centro de Graduados (3.8 min, 2 servidores)
             CreateOffice(officesContainer.transform, simMgr, OfficeType.CentroGraduados,
-                "Centro_Graduados", new Vector3(-220.0f, 58.3f, -25.0f), 2, 2, 3.8f, 0.9f);
+                "Centro_Graduados", new Vector3(250.0f, 61.91f, 75.0f), 2, 2, 3.8f, 0.9f);
 
             // Piso 2: Vicerrectoría de Docencia (4.5 min, 1 servidor)
             CreateOffice(officesContainer.transform, simMgr, OfficeType.VicerrectoriaDocencia,
-                "Vicerrectoria_Docencia", new Vector3(-290.0f, 58.3f, -25.0f), 2, 1, 4.5f, 1.2f);
+                "Vicerrectoria_Docencia", new Vector3(310.0f, 61.91f, 75.0f), 2, 1, 4.5f, 1.2f);
 
             // 7. Generar Prefab del Agente si no existe
             GameObject agentPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Prefabs/Agent_Pedestrian.prefab");
