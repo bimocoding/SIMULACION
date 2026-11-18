@@ -24,9 +24,10 @@ namespace Uniguajira.Simulation
         public CameraViewMode currentMode = CameraViewMode.Principal;
 
         [Header("Configuración de Cámara Libre")]
-        public float freeCamSpeed = 22.0f;
-        public float freeCamSprintMultiplier = 2.5f;
+        public float freeCamSpeed = 45.0f;
+        public float freeCamSprintMultiplier = 2.4f;
         public float mouseSensitivity = 2.5f;
+        public float keyboardTurnSpeed = 80.0f;
 
         [Header("Coordenadas Exactas (Basadas en las Capturas del Modelo)")]
         public static readonly Vector3 PosPrincipal = new Vector3(-260.0f, 6.5f, 110.0f);
@@ -47,22 +48,31 @@ namespace Uniguajira.Simulation
         public static readonly Vector3 PosPanoramica = new Vector3(180.0f, 420.0f, -220.0f);
         public static readonly Vector3 RotPanoramica = new Vector3(50.0f, 5.0f, 0.0f);
 
-        private CharacterController characterController;
         private float freeCamYaw = 0f;
         private float freeCamPitch = 0f;
 
         private void Awake()
         {
-            EnsureCharacterController();
+            RemoveConflictingCharacterController();
             DisableOtherCameras();
             SetViewMode(currentMode, instant: true);
         }
 
         private void Start()
         {
-            EnsureCharacterController();
+            RemoveConflictingCharacterController();
             DisableOtherCameras();
             SetViewMode(currentMode, instant: true);
+        }
+
+        private void RemoveConflictingCharacterController()
+        {
+            // La cámara libre utiliza SphereCast sweep directo que no causa desincronizaciones de posición
+            CharacterController cc = GetComponent<CharacterController>();
+            if (cc != null)
+            {
+                DestroyImmediate(cc);
+            }
         }
 
         private void Update()
@@ -73,27 +83,6 @@ namespace Uniguajira.Simulation
             {
                 UpdateFreeCamera();
             }
-        }
-
-        private void EnsureCharacterController()
-        {
-            if (characterController == null)
-            {
-                characterController = GetComponent<CharacterController>();
-                if (characterController == null)
-                {
-                    characterController = gameObject.AddComponent<CharacterController>();
-                }
-            }
-
-            // Forma esférica (height = 2 * radius) centrada en la cámara
-            characterController.radius = 0.35f;
-            characterController.height = 0.70f;
-            characterController.center = Vector3.zero;
-            characterController.minMoveDistance = 0f;
-            characterController.stepOffset = 0.3f;
-            characterController.slopeLimit = 65f;
-            characterController.skinWidth = 0.02f;
         }
 
         public void DisableOtherCameras()
@@ -118,24 +107,17 @@ namespace Uniguajira.Simulation
         public void SetViewMode(CameraViewMode mode, bool instant = true)
         {
             DisableOtherCameras();
-            EnsureCharacterController();
-
             currentMode = mode;
 
             if (mode == CameraViewMode.CamaraLibre)
             {
-                // Iniciar yaw y pitch desde la orientación actual
+                // Iniciar yaw y pitch desde la orientación actual de la cámara
                 freeCamYaw = transform.eulerAngles.y;
                 freeCamPitch = transform.eulerAngles.x;
                 if (freeCamPitch > 180f) freeCamPitch -= 360f;
-
-                if (characterController != null) characterController.enabled = true;
                 Debug.Log($"[SimulationCamera] Modo Cámara Libre Activado (Pos: {transform.position})");
                 return;
             }
-
-            // Para vistas fijas 1 a 6: desactivar CharacterController para posicionamiento instantáneo
-            if (characterController != null) characterController.enabled = false;
 
             Vector3 targetPos = PosPrincipal;
             Quaternion targetRot = Quaternion.Euler(RotPrincipal);
@@ -194,10 +176,7 @@ namespace Uniguajira.Simulation
 
         private void UpdateFreeCamera()
         {
-            EnsureCharacterController();
-            if (!characterController.enabled) characterController.enabled = true;
-
-            bool isLooking = false;
+            bool isLookingWithMouse = false;
             float mouseDeltaX = 0f;
             float mouseDeltaY = 0f;
 
@@ -210,67 +189,105 @@ namespace Uniguajira.Simulation
             bool isSprint = false;
             bool isSlow = false;
 
-            // 1. Lectura segura mediante el Nuevo Input System
+            float keyboardTurnX = 0f;
+            float keyboardTurnY = 0f;
+
+            // 1. Lectura robusta mediante el Nuevo Input System
 #if ENABLE_INPUT_SYSTEM
             try
             {
                 var mouse = Mouse.current;
                 if (mouse != null)
                 {
-                    isLooking = mouse.rightButton.isPressed || mouse.leftButton.isPressed;
+                    isLookingWithMouse = mouse.rightButton.isPressed || mouse.leftButton.isPressed;
                     Vector2 d = mouse.delta.ReadValue();
-                    mouseDeltaX = d.x * (mouseSensitivity * 0.08f);
-                    mouseDeltaY = d.y * (mouseSensitivity * 0.08f);
+                    mouseDeltaX = d.x * (mouseSensitivity * 0.12f);
+                    mouseDeltaY = d.y * (mouseSensitivity * 0.12f);
+
+                    // Ajuste de velocidad con la rueda del ratón
+                    float scroll = mouse.scroll.ReadValue().y;
+                    if (Mathf.Abs(scroll) > 0.01f)
+                    {
+                        freeCamSpeed = Mathf.Clamp(freeCamSpeed + Mathf.Sign(scroll) * 6.0f, 15f, 160f);
+                    }
                 }
 
                 var kb = Keyboard.current;
                 if (kb != null)
                 {
-                    moveForward = kb.wKey.isPressed || kb.upArrowKey.isPressed;
-                    moveBack = kb.sKey.isPressed || kb.downArrowKey.isPressed;
-                    moveRight = kb.dKey.isPressed || kb.rightArrowKey.isPressed;
-                    moveLeft = kb.aKey.isPressed || kb.leftArrowKey.isPressed;
-                    moveUp = kb.spaceKey.isPressed || kb.eKey.isPressed;
-                    moveDown = kb.leftCtrlKey.isPressed || kb.qKey.isPressed || kb.cKey.isPressed;
+                    // Desplazamiento horizontal WASD
+                    moveForward = kb.wKey.isPressed;
+                    moveBack = kb.sKey.isPressed;
+                    moveRight = kb.dKey.isPressed;
+                    moveLeft = kb.aKey.isPressed;
+
+                    // Desplazamiento vertical (Espacio para subir, Ctrl o Q para bajar)
+                    moveUp = kb.spaceKey.isPressed || kb.eKey.isPressed || kb.pageUpKey.isPressed;
+                    moveDown = kb.leftCtrlKey.isPressed || kb.qKey.isPressed || kb.cKey.isPressed || kb.pageDownKey.isPressed;
+
+                    // Modificadores de velocidad
                     isSprint = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
                     isSlow = kb.leftAltKey.isPressed;
+
+                    // Giro de cámara con las flechas del teclado
+                    if (kb.leftArrowKey.isPressed) keyboardTurnX -= 1f;
+                    if (kb.rightArrowKey.isPressed) keyboardTurnX += 1f;
+                    if (kb.upArrowKey.isPressed) keyboardTurnY += 1f;
+                    if (kb.downArrowKey.isPressed) keyboardTurnY -= 1f;
                 }
             }
             catch { }
 #endif
 
-            // 2. Fallback compatible con Legacy Input Manager (sin lanzar excepción si no está activo)
+            // 2. Fallback protegido compatible con Legacy Input
             try
             {
-                if (!isLooking) isLooking = Input.GetMouseButton(1) || Input.GetMouseButton(0);
-                if (isLooking && Mathf.Abs(mouseDeltaX) < 0.001f && Mathf.Abs(mouseDeltaY) < 0.001f)
+                if (!isLookingWithMouse) isLookingWithMouse = Input.GetMouseButton(1) || Input.GetMouseButton(0);
+                if (isLookingWithMouse && Mathf.Abs(mouseDeltaX) < 0.001f && Mathf.Abs(mouseDeltaY) < 0.001f)
                 {
-                    mouseDeltaX = Input.GetAxis("Mouse X") * mouseSensitivity;
-                    mouseDeltaY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+                    mouseDeltaX = Input.GetAxis("Mouse X") * mouseSensitivity * 1.5f;
+                    mouseDeltaY = Input.GetAxis("Mouse Y") * mouseSensitivity * 1.5f;
                 }
 
-                if (!moveForward) moveForward = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow);
-                if (!moveBack) moveBack = Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow);
-                if (!moveRight) moveRight = Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow);
-                if (!moveLeft) moveLeft = Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow);
+                if (!moveForward) moveForward = Input.GetKey(KeyCode.W);
+                if (!moveBack) moveBack = Input.GetKey(KeyCode.S);
+                if (!moveRight) moveRight = Input.GetKey(KeyCode.D);
+                if (!moveLeft) moveLeft = Input.GetKey(KeyCode.A);
                 if (!moveUp) moveUp = Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.E);
                 if (!moveDown) moveDown = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.Q) || Input.GetKey(KeyCode.C);
                 if (!isSprint) isSprint = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                 if (!isSlow) isSlow = Input.GetKey(KeyCode.LeftAlt);
+
+                if (Mathf.Abs(keyboardTurnX) < 0.01f)
+                {
+                    if (Input.GetKey(KeyCode.LeftArrow)) keyboardTurnX -= 1f;
+                    if (Input.GetKey(KeyCode.RightArrow)) keyboardTurnX += 1f;
+                }
+                if (Mathf.Abs(keyboardTurnY) < 0.01f)
+                {
+                    if (Input.GetKey(KeyCode.UpArrow)) keyboardTurnY += 1f;
+                    if (Input.GetKey(KeyCode.DownArrow)) keyboardTurnY -= 1f;
+                }
             }
             catch { }
 
-            // 3. Rotación de Cámara (Mouse Look)
-            if (isLooking)
+            // 3. Aplicar rotación (Ratón y/o Flechas del teclado)
+            if (isLookingWithMouse)
             {
                 freeCamYaw += mouseDeltaX;
                 freeCamPitch -= mouseDeltaY;
-                freeCamPitch = Mathf.Clamp(freeCamPitch, -85.0f, 85.0f);
-
-                transform.rotation = Quaternion.Euler(freeCamPitch, freeCamYaw, 0f);
             }
 
-            // 4. Velocidad de Movimiento
+            if (Mathf.Abs(keyboardTurnX) > 0.01f || Mathf.Abs(keyboardTurnY) > 0.01f)
+            {
+                freeCamYaw += keyboardTurnX * keyboardTurnSpeed * Time.unscaledDeltaTime;
+                freeCamPitch -= keyboardTurnY * (keyboardTurnSpeed * 0.75f) * Time.unscaledDeltaTime;
+            }
+
+            freeCamPitch = Mathf.Clamp(freeCamPitch, -85.0f, 85.0f);
+            transform.rotation = Quaternion.Euler(freeCamPitch, freeCamYaw, 0f);
+
+            // 4. Velocidad activa
             float currentSpeed = freeCamSpeed;
             if (isSprint) currentSpeed *= freeCamSprintMultiplier;
             if (isSlow) currentSpeed *= 0.35f;
@@ -287,43 +304,56 @@ namespace Uniguajira.Simulation
             if (moveDirection.sqrMagnitude > 0.001f)
             {
                 moveDirection.Normalize();
-                Vector3 displacement = moveDirection * currentSpeed * Time.unscaledDeltaTime;
+                MoveWithPhysics(moveDirection, currentSpeed);
+            }
+        }
 
-                // FÍSICAS DE MUROS CON PHYSX
-                if (characterController != null && characterController.enabled)
-                {
-                    Vector3 posBefore = transform.position;
-                    characterController.Move(displacement);
+        // Desplazamiento con Físicas: SphereCast Sweep contra Muros y Bancas
+        public void MoveWithPhysics(Vector3 moveDir, float speed)
+        {
+            Vector3 moveVector = moveDir * speed * Time.unscaledDeltaTime;
+            float moveDist = moveVector.magnitude;
+            if (moveDist <= 0.0001f) return;
 
-                    // Si queda atascado por overlap inicial con un collider no-convexo
-                    if ((transform.position - posBefore).sqrMagnitude < 0.00001f)
-                    {
-                        RaycastHit hit;
-                        if (!Physics.SphereCast(posBefore, 0.25f, moveDirection, out hit, displacement.magnitude, ~0, QueryTriggerInteraction.Ignore))
-                        {
-                            transform.position = posBefore + displacement;
-                        }
-                        else if (hit.distance > 0.05f)
-                        {
-                            transform.position = posBefore + moveDirection * (hit.distance - 0.02f);
-                        }
-                    }
-                }
-                else
+            Vector3 dir = moveVector / moveDist;
+            RaycastHit hit;
+            float radius = 0.35f; // Radio esférico de colisión del observador
+
+            if (Physics.SphereCast(transform.position, radius, dir, out hit, moveDist, ~0, QueryTriggerInteraction.Ignore))
+            {
+                // Muro detectado: avanzar hasta el límite superficial
+                float allowedDist = Mathf.Max(0f, hit.distance - 0.03f);
+                transform.position += dir * allowedDist;
+
+                // Deslizar suavemente sobre la pared
+                Vector3 remaining = dir * (moveDist - allowedDist);
+                Vector3 slide = Vector3.ProjectOnPlane(remaining, hit.normal);
+                float slideDist = slide.magnitude;
+                if (slideDist > 0.001f)
                 {
-                    // Fallback con SphereCast para respetar paredes aun sin CharacterController
-                    RaycastHit hit;
-                    if (Physics.SphereCast(transform.position, 0.30f, moveDirection, out hit, displacement.magnitude, ~0, QueryTriggerInteraction.Ignore))
+                    if (!Physics.SphereCast(transform.position, radius, slide / slideDist, out RaycastHit slideHit, slideDist, ~0, QueryTriggerInteraction.Ignore))
                     {
-                        float allowed = Mathf.Max(0, hit.distance - 0.02f);
-                        transform.position += moveDirection * allowed;
+                        transform.position += slide;
                     }
                     else
                     {
-                        transform.position += displacement;
+                        float allowedSlide = Mathf.Max(0f, slideHit.distance - 0.03f);
+                        transform.position += (slide / slideDist) * allowedSlide;
                     }
                 }
             }
+            else
+            {
+                // Vía despejada
+                transform.position += moveVector;
+            }
+        }
+
+        public void ManualTurn(float yawDelta, float pitchDelta)
+        {
+            freeCamYaw += yawDelta;
+            freeCamPitch = Mathf.Clamp(freeCamPitch + pitchDelta, -85f, 85f);
+            transform.rotation = Quaternion.Euler(freeCamPitch, freeCamYaw, 0f);
         }
 
         private void CheckKeyboardInput()

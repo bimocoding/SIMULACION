@@ -992,15 +992,58 @@ namespace Uniguajira.Simulation
 
             GUILayout.EndArea();
 
-            // Guía de Controles en Pantalla si la Cámara Libre está activa
-            if (curCam == SimulationCameraController.CameraViewMode.CamaraLibre)
+            // Guía y Panel Interactivo de Controles si la Cámara Libre está activa
+            if (curCam == SimulationCameraController.CameraViewMode.CamaraLibre && cameraController != null)
             {
-                float hudW = Mathf.Min(720f, Screen.width * 0.9f);
+                float hudW = Mathf.Min(780f, Screen.width * 0.95f);
                 float hudX = (Screen.width - hudW) * 0.5f;
-                GUI.Box(new Rect(hudX, Screen.height - 42, hudW, 34), "");
-                GUI.Label(new Rect(hudX, Screen.height - 38, hudW, 26),
-                    "<color=cyan><b>CÁMARA LIBRE ACTIVA:</b></color> <b>WASD</b> Mover | <b>Clic Der + Mouse</b> Girar | <b>Espacio/Q</b> Subir/Bajar | <b>Shift</b> Correr | <i>[Físicas de Muros Activas]</i>",
+                GUI.Box(new Rect(hudX, Screen.height - 44, hudW, 36), "");
+                GUI.Label(new Rect(hudX, Screen.height - 40, hudW, 28),
+                    "<color=cyan><b>CÁMARA LIBRE ACTIVA:</b></color> <b>WASD</b> Mover | <b>Flechas o Clic y Arrastrar</b> Girar | <b>Espacio/Q</b> Subir/Bajar | <b>Shift</b> Correr | <i>[Físicas de Muros Activas]</i>",
                     new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, richText = true, fontSize = 11 });
+
+                // Panel táctil / clic en pantalla para navegación directa
+                float padW = 205f;
+                float padH = 112f;
+                float padX = Screen.width - padW - 10f;
+                float padY = Screen.height - padH - 50f;
+                GUI.Box(new Rect(padX, padY, padW, padH), "<b>Navegación con Clic</b>");
+
+                float btnSpeed = 45.0f;
+                if (GUI.RepeatButton(new Rect(padX + 10, padY + 24, 58, 25), "↺ Girar"))
+                {
+                    cameraController.ManualTurn(-70f * Time.unscaledDeltaTime, 0f);
+                }
+                if (GUI.RepeatButton(new Rect(padX + 73, padY + 24, 58, 25), "▲"))
+                {
+                    cameraController.MoveWithPhysics(cameraController.transform.forward, btnSpeed);
+                }
+                if (GUI.RepeatButton(new Rect(padX + 136, padY + 24, 58, 25), "Girar ↻"))
+                {
+                    cameraController.ManualTurn(70f * Time.unscaledDeltaTime, 0f);
+                }
+
+                if (GUI.RepeatButton(new Rect(padX + 10, padY + 52, 58, 25), "◄"))
+                {
+                    cameraController.MoveWithPhysics(-cameraController.transform.right, btnSpeed);
+                }
+                if (GUI.RepeatButton(new Rect(padX + 73, padY + 52, 58, 25), "▼"))
+                {
+                    cameraController.MoveWithPhysics(-cameraController.transform.forward, btnSpeed);
+                }
+                if (GUI.RepeatButton(new Rect(padX + 136, padY + 52, 58, 25), "►"))
+                {
+                    cameraController.MoveWithPhysics(cameraController.transform.right, btnSpeed);
+                }
+
+                if (GUI.RepeatButton(new Rect(padX + 10, padY + 80, 90, 24), "Subir ▲"))
+                {
+                    cameraController.MoveWithPhysics(Vector3.up, btnSpeed);
+                }
+                if (GUI.RepeatButton(new Rect(padX + 104, padY + 80, 90, 24), "Bajar ▼"))
+                {
+                    cameraController.MoveWithPhysics(Vector3.down, btnSpeed);
+                }
             }
         }
 

@@ -1608,7 +1608,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Uniguajira.Simulation.SimulationCameraController
   currentMode: 1
-  followTarget: {fileID: 0}
+  freeCamSpeed: 22
+  freeCamSprintMultiplier: 2.5
+  mouseSensitivity: 2.5
+  keyboardTurnSpeed: 80
 --- !u!1 &333058849 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: -6855150508853811712, guid: 7ebe5b461b61eca4a954e9534ddfa449, type: 3}
