@@ -518,20 +518,34 @@ namespace Uniguajira.Simulation
             if (block == null) block = GameObject.Find("Bloque_Administrativo_A");
             if (block == null) return;
 
+            // 1. Remover colisionadores en todas las puertas y muros de vano para hacerlas 100% atravesables
+            var allCols = block.GetComponentsInChildren<Collider>(true);
+            foreach (var c in allCols)
+            {
+                if (c == null) continue;
+                string n = c.gameObject.name.ToLower();
+                if (n.Contains("door") || n.Contains("puerta") ||
+                    n.Contains("cube.002") || n.Contains("cube.003") ||
+                    n.Contains("cube.044") || n.Contains("cube.045") || n.Contains("cube.046"))
+                {
+                    c.enabled = false;
+                    c.gameObject.layer = 2; // Ignore Raycast
+                    if (Application.isPlaying) Destroy(c);
+                    else DestroyImmediate(c);
+                }
+            }
+
+            // 2. Colisionadores en los muros restantes, escaleras y fachada estructural
             var renderers = block.GetComponentsInChildren<Renderer>(true);
             foreach (var r in renderers)
             {
                 string n = r.gameObject.name.ToLower();
                 if (n.Contains("tree") || n.Contains("foliage") || n.Contains("leaf") || n.Contains("hoja") ||
                     n.Contains("arbol") || n.Contains("bush") || n.Contains("vegetation") || n.Contains("branch") ||
-                    n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045") ||
-                    n.Contains("cube.003") || n.StartsWith("door_"))
+                    n.Contains("door") || n.Contains("puerta") ||
+                    n.Contains("cube.002") || n.Contains("cube.003") ||
+                    n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045"))
                 {
-                    var existingCol = r.GetComponent<Collider>();
-                    if (existingCol != null && (n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045") || n.Contains("cube.003") || n.StartsWith("door_")))
-                    {
-                        Destroy(existingCol);
-                    }
                     continue;
                 }
                 var col = r.GetComponent<Collider>();

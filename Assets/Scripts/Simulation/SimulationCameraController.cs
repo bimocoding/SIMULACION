@@ -308,7 +308,7 @@ namespace Uniguajira.Simulation
             }
         }
 
-        // Desplazamiento con Físicas: SphereCast Sweep contra Muros y Bancas
+        // Desplazamiento con Físicas: SphereCast Sweep contra Muros y Bancas, con puertas atravesables
         public void MoveWithPhysics(Vector3 moveDir, float speed)
         {
             Vector3 moveVector = moveDir * speed * Time.unscaledDeltaTime;
@@ -316,28 +316,68 @@ namespace Uniguajira.Simulation
             if (moveDist <= 0.0001f) return;
 
             Vector3 dir = moveVector / moveDist;
-            RaycastHit hit;
             float radius = 0.35f; // Radio esférico de colisión del observador
 
-            if (Physics.SphereCast(transform.position, radius, dir, out hit, moveDist, ~0, QueryTriggerInteraction.Ignore))
+            // Realizamos SphereCast ignorando puertas y vanos para permitir atravesar libremente al aula
+            RaycastHit[] hits = Physics.SphereCastAll(transform.position, radius, dir, moveDist, ~0, QueryTriggerInteraction.Ignore);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+            RaycastHit blockingHit = default;
+            bool hasBlock = false;
+
+            foreach (var h in hits)
+            {
+                if (h.collider == null) continue;
+                string colName = h.collider.gameObject.name.ToLower();
+                if (colName.Contains("door") || colName.Contains("puerta") ||
+                    colName.Contains("cube.002") || colName.Contains("cube.003") ||
+                    colName.Contains("cube.044") || colName.Contains("cube.045") || colName.Contains("cube.046"))
+                {
+                    continue; // Puertas y vanos son completamente atravesables
+                }
+                blockingHit = h;
+                hasBlock = true;
+                break;
+            }
+
+            if (hasBlock)
             {
                 // Muro detectado: avanzar hasta el límite superficial
-                float allowedDist = Mathf.Max(0f, hit.distance - 0.03f);
+                float allowedDist = Mathf.Max(0f, blockingHit.distance - 0.03f);
                 transform.position += dir * allowedDist;
 
                 // Deslizar suavemente sobre la pared
                 Vector3 remaining = dir * (moveDist - allowedDist);
-                Vector3 slide = Vector3.ProjectOnPlane(remaining, hit.normal);
+                Vector3 slide = Vector3.ProjectOnPlane(remaining, blockingHit.normal);
                 float slideDist = slide.magnitude;
                 if (slideDist > 0.001f)
                 {
-                    if (!Physics.SphereCast(transform.position, radius, slide / slideDist, out RaycastHit slideHit, slideDist, ~0, QueryTriggerInteraction.Ignore))
+                    RaycastHit[] slideHits = Physics.SphereCastAll(transform.position, radius, slide / slideDist, slideDist, ~0, QueryTriggerInteraction.Ignore);
+                    System.Array.Sort(slideHits, (a, b) => a.distance.CompareTo(b.distance));
+                    RaycastHit slideBlock = default;
+                    bool slideBlocked = false;
+                    foreach (var sh in slideHits)
+                    {
+                        if (sh.collider == null) continue;
+                        string sName = sh.collider.gameObject.name.ToLower();
+                        if (sName.Contains("door") || sName.Contains("puerta") ||
+                            sName.Contains("cube.002") || sName.Contains("cube.003") ||
+                            sName.Contains("cube.044") || sName.Contains("cube.045") || sName.Contains("cube.046"))
+                        {
+                            continue;
+                        }
+                        slideBlock = sh;
+                        slideBlocked = true;
+                        break;
+                    }
+
+                    if (!slideBlocked)
                     {
                         transform.position += slide;
                     }
                     else
                     {
-                        float allowedSlide = Mathf.Max(0f, slideHit.distance - 0.03f);
+                        float allowedSlide = Mathf.Max(0f, slideBlock.distance - 0.03f);
                         transform.position += (slide / slideDist) * allowedSlide;
                     }
                 }
