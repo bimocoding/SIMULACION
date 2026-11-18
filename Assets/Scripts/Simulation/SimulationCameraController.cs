@@ -1,6 +1,10 @@
 using System;
 using UnityEngine;
 
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
 namespace Uniguajira.Simulation
 {
     public class SimulationCameraController : MonoBehaviour
@@ -25,27 +29,21 @@ namespace Uniguajira.Simulation
         public float mouseSensitivity = 2.5f;
 
         [Header("Coordenadas Exactas (Basadas en las Capturas del Modelo)")]
-        // 1. Principal: Plaza exterior frente a la entrada viendo árbol, cilindro verde a la izq y puente
         public static readonly Vector3 PosPrincipal = new Vector3(-260.0f, 6.5f, 110.0f);
         public static readonly Vector3 RotPrincipal = new Vector3(-6.0f, 73.0f, 0.0f);
 
-        // 2. Pasillo Piso 1: Planta baja viendo hacia el núcleo rojo central, columna izq y patio
         public static readonly Vector3 PosPasilloP1 = new Vector3(38.0f, 17.8f, 48.0f);
         public static readonly Vector3 RotPasilloP1 = new Vector3(4.0f, 52.0f, 0.0f);
 
-        // 3. Salones Piso 1: Corredor de aulas piso 1 viendo puertas, bancas y núcleo rojo a la izq
         public static readonly Vector3 PosSalonesP1 = new Vector3(145.0f, 18.0f, 48.0f);
         public static readonly Vector3 RotSalonesP1 = new Vector3(5.0f, 90.0f, 0.0f);
 
-        // 4. Pasillo Piso 2: Planta alta con columna izq, baranda de celosía, mostrador y luces lineales
         public static readonly Vector3 PosPasilloP2 = new Vector3(38.0f, 75.0f, 48.0f);
         public static readonly Vector3 RotPasilloP2 = new Vector3(4.0f, 52.0f, 0.0f);
 
-        // 5. Salones Piso 2: Corredor de aulas piso 2 longitudinal con luces de techo y puertas
         public static readonly Vector3 PosSalonesP2 = new Vector3(145.0f, 75.0f, 48.0f);
         public static readonly Vector3 RotSalonesP2 = new Vector3(5.0f, 90.0f, 0.0f);
 
-        // 6. Panorámica Aérea General 45°
         public static readonly Vector3 PosPanoramica = new Vector3(180.0f, 420.0f, -220.0f);
         public static readonly Vector3 RotPanoramica = new Vector3(50.0f, 5.0f, 0.0f);
 
@@ -86,13 +84,16 @@ namespace Uniguajira.Simulation
                 {
                     characterController = gameObject.AddComponent<CharacterController>();
                 }
-                characterController.radius = 0.45f;
-                characterController.height = 1.6f;
-                characterController.center = Vector3.zero;
-                characterController.minMoveDistance = 0f;
-                characterController.stepOffset = 0.4f;
-                characterController.slopeLimit = 55f;
             }
+
+            // Forma esférica (height = 2 * radius) centrada en la cámara
+            characterController.radius = 0.35f;
+            characterController.height = 0.70f;
+            characterController.center = Vector3.zero;
+            characterController.minMoveDistance = 0f;
+            characterController.stepOffset = 0.3f;
+            characterController.slopeLimit = 65f;
+            characterController.skinWidth = 0.02f;
         }
 
         public void DisableOtherCameras()
@@ -123,7 +124,7 @@ namespace Uniguajira.Simulation
 
             if (mode == CameraViewMode.CamaraLibre)
             {
-                // Iniciar yaw y pitch desde la rotación actual de la cámara
+                // Iniciar yaw y pitch desde la orientación actual
                 freeCamYaw = transform.eulerAngles.y;
                 freeCamPitch = transform.eulerAngles.x;
                 if (freeCamPitch > 180f) freeCamPitch -= 360f;
@@ -133,7 +134,7 @@ namespace Uniguajira.Simulation
                 return;
             }
 
-            // Para vistas fijas 1 a 6: Desactivar CharacterController para teleportar limpio
+            // Para vistas fijas 1 a 6: desactivar CharacterController para posicionamiento instantáneo
             if (characterController != null) characterController.enabled = false;
 
             Vector3 targetPos = PosPrincipal;
@@ -167,11 +168,9 @@ namespace Uniguajira.Simulation
                     break;
             }
 
-            // 1. Mover la cámara del juego (Game View)
             transform.position = targetPos;
             transform.rotation = targetRot;
 
-            // 2. Sincronizar también la vista de edición (Scene View) en el Editor de Unity
 #if UNITY_EDITOR
             try
             {
@@ -198,50 +197,132 @@ namespace Uniguajira.Simulation
             EnsureCharacterController();
             if (!characterController.enabled) characterController.enabled = true;
 
-            // 1. Rotación con el ratón (manteniendo Clic Derecho, o directo)
-            if (Input.GetMouseButton(1))
-            {
-                float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
-                float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+            bool isLooking = false;
+            float mouseDeltaX = 0f;
+            float mouseDeltaY = 0f;
 
-                freeCamYaw += mouseX;
-                freeCamPitch -= mouseY;
+            bool moveForward = false;
+            bool moveBack = false;
+            bool moveLeft = false;
+            bool moveRight = false;
+            bool moveUp = false;
+            bool moveDown = false;
+            bool isSprint = false;
+            bool isSlow = false;
+
+            // 1. Lectura segura mediante el Nuevo Input System
+#if ENABLE_INPUT_SYSTEM
+            try
+            {
+                var mouse = Mouse.current;
+                if (mouse != null)
+                {
+                    isLooking = mouse.rightButton.isPressed || mouse.leftButton.isPressed;
+                    Vector2 d = mouse.delta.ReadValue();
+                    mouseDeltaX = d.x * (mouseSensitivity * 0.08f);
+                    mouseDeltaY = d.y * (mouseSensitivity * 0.08f);
+                }
+
+                var kb = Keyboard.current;
+                if (kb != null)
+                {
+                    moveForward = kb.wKey.isPressed || kb.upArrowKey.isPressed;
+                    moveBack = kb.sKey.isPressed || kb.downArrowKey.isPressed;
+                    moveRight = kb.dKey.isPressed || kb.rightArrowKey.isPressed;
+                    moveLeft = kb.aKey.isPressed || kb.leftArrowKey.isPressed;
+                    moveUp = kb.spaceKey.isPressed || kb.eKey.isPressed;
+                    moveDown = kb.leftCtrlKey.isPressed || kb.qKey.isPressed || kb.cKey.isPressed;
+                    isSprint = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
+                    isSlow = kb.leftAltKey.isPressed;
+                }
+            }
+            catch { }
+#endif
+
+            // 2. Fallback compatible con Legacy Input Manager (sin lanzar excepción si no está activo)
+            try
+            {
+                if (!isLooking) isLooking = Input.GetMouseButton(1) || Input.GetMouseButton(0);
+                if (isLooking && Mathf.Abs(mouseDeltaX) < 0.001f && Mathf.Abs(mouseDeltaY) < 0.001f)
+                {
+                    mouseDeltaX = Input.GetAxis("Mouse X") * mouseSensitivity;
+                    mouseDeltaY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+                }
+
+                if (!moveForward) moveForward = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow);
+                if (!moveBack) moveBack = Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow);
+                if (!moveRight) moveRight = Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow);
+                if (!moveLeft) moveLeft = Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow);
+                if (!moveUp) moveUp = Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.E);
+                if (!moveDown) moveDown = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.Q) || Input.GetKey(KeyCode.C);
+                if (!isSprint) isSprint = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                if (!isSlow) isSlow = Input.GetKey(KeyCode.LeftAlt);
+            }
+            catch { }
+
+            // 3. Rotación de Cámara (Mouse Look)
+            if (isLooking)
+            {
+                freeCamYaw += mouseDeltaX;
+                freeCamPitch -= mouseDeltaY;
                 freeCamPitch = Mathf.Clamp(freeCamPitch, -85.0f, 85.0f);
 
                 transform.rotation = Quaternion.Euler(freeCamPitch, freeCamYaw, 0f);
             }
 
-            // 2. Cálculo de Velocidad y Modificadores
+            // 4. Velocidad de Movimiento
             float currentSpeed = freeCamSpeed;
-            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
-            {
-                currentSpeed *= freeCamSprintMultiplier;
-            }
-            if (Input.GetKey(KeyCode.LeftAlt))
-            {
-                currentSpeed *= 0.35f;
-            }
+            if (isSprint) currentSpeed *= freeCamSprintMultiplier;
+            if (isSlow) currentSpeed *= 0.35f;
 
-            // 3. Vector de Desplazamiento Relativo a la Orientación
+            // 5. Dirección de Desplazamiento
             Vector3 moveDirection = Vector3.zero;
-
-            // Ejes horizontales
-            if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow)) moveDirection += transform.forward;
-            if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow)) moveDirection -= transform.forward;
-            if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) moveDirection += transform.right;
-            if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow)) moveDirection -= transform.right;
-
-            // Eje vertical (Volar / Bajar)
-            if (Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.E)) moveDirection += Vector3.up;
-            if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.Q) || Input.GetKey(KeyCode.C)) moveDirection -= Vector3.up;
+            if (moveForward) moveDirection += transform.forward;
+            if (moveBack) moveDirection -= transform.forward;
+            if (moveRight) moveDirection += transform.right;
+            if (moveLeft) moveDirection -= transform.right;
+            if (moveUp) moveDirection += Vector3.up;
+            if (moveDown) moveDirection -= Vector3.up;
 
             if (moveDirection.sqrMagnitude > 0.001f)
             {
                 moveDirection.Normalize();
+                Vector3 displacement = moveDirection * currentSpeed * Time.unscaledDeltaTime;
 
-                // FÍSICAS CONTRA MUROS: characterController.Move() usa PhysX
-                // Bloquea completamente el paso a través de muros, columnas, bancas y barandas
-                characterController.Move(moveDirection * currentSpeed * Time.unscaledDeltaTime);
+                // FÍSICAS DE MUROS CON PHYSX
+                if (characterController != null && characterController.enabled)
+                {
+                    Vector3 posBefore = transform.position;
+                    characterController.Move(displacement);
+
+                    // Si queda atascado por overlap inicial con un collider no-convexo
+                    if ((transform.position - posBefore).sqrMagnitude < 0.00001f)
+                    {
+                        RaycastHit hit;
+                        if (!Physics.SphereCast(posBefore, 0.25f, moveDirection, out hit, displacement.magnitude, ~0, QueryTriggerInteraction.Ignore))
+                        {
+                            transform.position = posBefore + displacement;
+                        }
+                        else if (hit.distance > 0.05f)
+                        {
+                            transform.position = posBefore + moveDirection * (hit.distance - 0.02f);
+                        }
+                    }
+                }
+                else
+                {
+                    // Fallback con SphereCast para respetar paredes aun sin CharacterController
+                    RaycastHit hit;
+                    if (Physics.SphereCast(transform.position, 0.30f, moveDirection, out hit, displacement.magnitude, ~0, QueryTriggerInteraction.Ignore))
+                    {
+                        float allowed = Mathf.Max(0, hit.distance - 0.02f);
+                        transform.position += moveDirection * allowed;
+                    }
+                    else
+                    {
+                        transform.position += displacement;
+                    }
+                }
             }
         }
 
@@ -250,7 +331,7 @@ namespace Uniguajira.Simulation
 #if ENABLE_INPUT_SYSTEM
             try
             {
-                var kb = UnityEngine.InputSystem.Keyboard.current;
+                var kb = Keyboard.current;
                 if (kb != null)
                 {
                     if (kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetViewMode(CameraViewMode.Principal, true);

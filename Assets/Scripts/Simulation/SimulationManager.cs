@@ -305,32 +305,14 @@ namespace Uniguajira.Simulation
 
         private void EnsureBenchOrientations()
         {
+            // Las bancas ya están orientadas correctamente (con espaldar a la pared) en la escena guardada.
+            // Aseguramos que todas posean MeshCollider para bloquear físicamente el paso.
             var allBenches = FindObjectsByType<Transform>(FindObjectsSortMode.None);
             foreach (var t in allBenches)
             {
-                if (!t.name.StartsWith("Bench_")) continue;
-                var mf = t.GetComponent<MeshFilter>();
-                if (mf == null || mf.sharedMesh == null) continue;
-
-                float topZSum = 0, seatZSum = 0;
-                int topCount = 0, seatCount = 0;
-                foreach (var v in mf.sharedMesh.vertices)
+                if (t.name.StartsWith("Bench_") && t.GetComponent<Collider>() == null)
                 {
-                    var w = t.TransformPoint(v);
-                    if (w.y > (t.position.y + 4.5f)) { topZSum += w.z; topCount++; }
-                    if (w.y > (t.position.y + 1.0f) && w.y < (t.position.y + 3.0f)) { seatZSum += w.z; seatCount++; }
-                }
-                float topZ = topCount > 0 ? (topZSum / topCount) : t.position.z;
-                float seatZ = seatCount > 0 ? (seatZSum / seatCount) : t.position.z;
-
-                bool isNorth = t.position.z < 200f;
-                bool needsFlip = isNorth ? (topZ > seatZ) : (topZ < seatZ);
-
-                if (needsFlip)
-                {
-                    var rend = t.GetComponent<Renderer>();
-                    Vector3 center = rend != null ? rend.bounds.center : t.position;
-                    t.RotateAround(center, Vector3.up, 180f);
+                    t.gameObject.AddComponent<MeshCollider>();
                 }
             }
         }
