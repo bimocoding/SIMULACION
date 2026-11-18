@@ -119,6 +119,7 @@ namespace Uniguajira.Simulation
             InitializeClassroomDirectory();
             EnsureAccessPoints();
             EnsureOffices();
+            EnsureAllClassroomLabs();
 
             cameraController = FindAnyObjectByType<SimulationCameraController>();
             if (cameraController == null && Camera.main != null)
@@ -359,6 +360,109 @@ namespace Uniguajira.Simulation
             }
         }
 
+        public static Vector3 GetClassroomWorkstationPosition(ClassroomData cr, int slotIndex)
+        {
+            Vector3 d0 = new Vector3(160.30f, 4.71f, 34.40f);
+            Vector3 baseWs = LabWorkstations[slotIndex % LabWorkstations.Length];
+            Vector3 local = baseWs - d0;
+
+            if (cr.isNorthWing)
+            {
+                Vector3 delta = cr.doorPosition - d0;
+                return baseWs + delta;
+            }
+            else
+            {
+                Vector3 rotLocal = new Vector3(-local.x, local.y, -local.z);
+                return cr.doorPosition + rotLocal;
+            }
+        }
+
+        public static Vector3 GetClassroomLabEntry(ClassroomData cr)
+        {
+            Vector3 d0 = new Vector3(160.30f, 4.71f, 34.40f);
+            Vector3 local = LabEntryCorridor - d0;
+
+            if (cr.isNorthWing)
+            {
+                Vector3 delta = cr.doorPosition - d0;
+                return LabEntryCorridor + delta;
+            }
+            else
+            {
+                Vector3 rotLocal = new Vector3(-local.x, local.y, -local.z);
+                return cr.doorPosition + rotLocal;
+            }
+        }
+
+        public void EnsureAllClassroomLabs()
+        {
+            Vector3 d0 = new Vector3(160.30f, 4.71f, 34.40f);
+
+            var allObjs = FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+            var protoList = new List<GameObject>();
+            foreach (var go in allObjs)
+            {
+                if ((go.name.StartsWith("Lab_") || go.name.StartsWith("AC_Lab") || 
+                     go.name.StartsWith("Cabinet_Lab") || go.name.StartsWith("Whiteboard_Lab") || 
+                     go.name.StartsWith("Partition_")) &&
+                    !go.name.Contains("(1)") && !go.name.Contains("_cloned_"))
+                {
+                    if (go.transform.parent != null && go.transform.parent.name.StartsWith("AulaLab_")) continue;
+                    protoList.Add(go);
+                }
+            }
+
+            GameObject rootContainer = GameObject.Find("Aulas_Laboratorios");
+            if (rootContainer == null) rootContainer = new GameObject("Aulas_Laboratorios");
+
+            foreach (var cr in registeredClassrooms)
+            {
+                if (cr.doorName == "Door_GF_N1") continue; // Salón 101 ya posee los muebles originales del FBX
+
+                string containerName = "AulaLab_" + cr.doorName;
+                Transform existing = rootContainer.transform.Find(containerName);
+                if (existing != null) continue;
+
+                GameObject aulaContainer = new GameObject(containerName);
+                aulaContainer.transform.SetParent(rootContainer.transform);
+
+                bool isNorth = cr.isNorthWing;
+                Vector3 doorPos = cr.doorPosition;
+                Vector3 deltaNorth = doorPos - d0;
+
+                foreach (var proto in protoList)
+                {
+                    GameObject clone = Instantiate(proto, aulaContainer.transform);
+                    clone.name = $"{proto.name}_cloned_{cr.doorName}";
+
+                    if (isNorth)
+                    {
+                        clone.transform.position = proto.transform.position + deltaNorth;
+                        clone.transform.rotation = proto.transform.rotation;
+                    }
+                    else
+                    {
+                        Vector3 local = proto.transform.position - d0;
+                        Vector3 rotLocal = new Vector3(-local.x, local.y, -local.z);
+                        clone.transform.position = doorPos + rotLocal;
+                        clone.transform.rotation = Quaternion.Euler(0, 180f, 0) * proto.transform.rotation;
+                    }
+                    clone.transform.localScale = proto.transform.localScale;
+
+                    // Colisionadores para paredes y muebles de cada salón
+                    if (clone.name.StartsWith("Lab_Walls") || clone.name.StartsWith("Lab_Floor") || clone.name.StartsWith("Lab_WS"))
+                    {
+                        if (clone.GetComponent<Collider>() == null)
+                        {
+                            var mc = clone.AddComponent<MeshCollider>();
+                            mc.convex = false;
+                        }
+                    }
+                }
+            }
+        }
+
         private void EnsureModelAndEnvironmentInScene()
         {
             Camera[] allCams = FindObjectsByType<Camera>(FindObjectsSortMode.None);
@@ -420,10 +524,11 @@ namespace Uniguajira.Simulation
                 string n = r.gameObject.name.ToLower();
                 if (n.Contains("tree") || n.Contains("foliage") || n.Contains("leaf") || n.Contains("hoja") ||
                     n.Contains("arbol") || n.Contains("bush") || n.Contains("vegetation") || n.Contains("branch") ||
-                    n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045"))
+                    n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045") ||
+                    n.Contains("cube.003") || n.StartsWith("door_"))
                 {
                     var existingCol = r.GetComponent<Collider>();
-                    if (existingCol != null && (n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045")))
+                    if (existingCol != null && (n.Contains("cube.044") || n.Contains("cube.046") || n.Contains("cube.045") || n.Contains("cube.003") || n.StartsWith("door_")))
                     {
                         Destroy(existingCol);
                     }
@@ -502,6 +607,7 @@ namespace Uniguajira.Simulation
 
             EnsureOffices();
             CreateDoorSignboards();
+            EnsureAllClassroomLabs();
 
             // 1. Generar la población inicial que ya estaba dentro del bloque (47 personas)
             SpawnInitialPopulation();
@@ -531,22 +637,13 @@ namespace Uniguajira.Simulation
 
                 if (role == AgentRole.Estudiante && registeredClassrooms.Count > 0)
                 {
-                    // Estudiantes se distribuyen exclusivamente en aulas
+                    // Estudiantes se distribuyen exclusivamente en aulas (sentados en sus puestos de cómputo)
                     var validRooms = registeredClassrooms.FindAll(c => c.floorLevel == floor);
                     if (validRooms.Count == 0) validRooms = registeredClassrooms;
                     classroom = validRooms[i % validRooms.Count];
 
                     int slot = classroom.currentOccupants;
-                    if (classroom.doorName == "Door_GF_N1")
-                    {
-                        // Aula 101 (Sala de Cómputo): Inician directamente ubicados en las estaciones de cómputo dentro de Lab_Walls
-                        spawnPos = LabWorkstations[slot % LabWorkstations.Length];
-                    }
-                    else
-                    {
-                        Vector3 slotOffset = (classroom.isNorthWing ? Vector3.forward : -Vector3.forward) * (2.5f + (slot / 3) * 1.4f) + Vector3.right * ((slot % 3 - 1) * 1.6f);
-                        spawnPos = classroom.doorPosition + slotOffset;
-                    }
+                    spawnPos = GetClassroomWorkstationPosition(classroom, slot);
                 }
                 else
                 {
@@ -689,26 +786,18 @@ namespace Uniguajira.Simulation
             float corridorZ = isNorth ? 52.0f : 418.0f;
             float floorY = (destFloor == 1) ? 4.71f : 61.91f;
 
-            bool isLabClassroom = (classroom != null && classroom.doorName == "Door_GF_N1");
             Vector3 finalDest;
-            if (isLabClassroom)
+            if (classroom != null)
             {
                 int slot = classroom.currentOccupants;
-                finalDest = LabWorkstations[slot % LabWorkstations.Length];
-            }
-            else if (classroom != null)
-            {
-                int slot = classroom.currentOccupants;
-                float slotX = ((slot % 3) - 1.0f) * 1.6f;
-                float standZ = isNorth ? 37.5f : 435.5f;
-                finalDest = new Vector3(classroom.doorPosition.x + slotX, floorY, standZ);
+                finalDest = GetClassroomWorkstationPosition(classroom, slot);
             }
             else
             {
                 finalDest = office.queueStartPoint != null ? office.queueStartPoint.position : office.transform.position;
             }
 
-            Vector3 finalHallway = new Vector3(isLabClassroom ? classroom.doorPosition.x : finalDest.x, floorY, corridorZ);
+            Vector3 finalHallway = new Vector3(classroom != null ? classroom.doorPosition.x : finalDest.x, floorY, corridorZ);
             bool isSpawningAtMain = (startPos.x < 0);
 
             if (isSpawningAtMain)
@@ -721,11 +810,9 @@ namespace Uniguajira.Simulation
                 {
                     // Recorrido por el centro del pasillo
                     path.Add(finalHallway + RandomJitter());
-                    if (isLabClassroom)
+                    if (classroom != null)
                     {
-                        path.Add(classroom.doorPosition);
-                        path.Add(LabEntryCorridor);
-                        path.Add(new Vector3(165.0f, 4.71f, finalDest.z));
+                        AddClassroomEntranceWaypoints(path, classroom, finalDest, floorY);
                     }
                     path.Add(finalDest);
                 }
@@ -738,6 +825,10 @@ namespace Uniguajira.Simulation
                     path.Add(new Vector3(360.0f, 61.91f, 193.0f));
                     path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
+                    if (classroom != null)
+                    {
+                        AddClassroomEntranceWaypoints(path, classroom, finalDest, floorY);
+                    }
                     path.Add(finalDest);
                 }
             }
@@ -750,11 +841,9 @@ namespace Uniguajira.Simulation
                 if (destFloor == 1)
                 {
                     path.Add(finalHallway + RandomJitter());
-                    if (isLabClassroom)
+                    if (classroom != null)
                     {
-                        path.Add(classroom.doorPosition);
-                        path.Add(LabEntryCorridor);
-                        path.Add(new Vector3(165.0f, 4.71f, finalDest.z));
+                        AddClassroomEntranceWaypoints(path, classroom, finalDest, floorY);
                     }
                     path.Add(finalDest);
                 }
@@ -766,11 +855,26 @@ namespace Uniguajira.Simulation
                     path.Add(new Vector3(360.0f, 61.91f, 193.0f));
                     path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
+                    if (classroom != null)
+                    {
+                        AddClassroomEntranceWaypoints(path, classroom, finalDest, floorY);
+                    }
                     path.Add(finalDest);
                 }
             }
 
             return path;
+        }
+
+        private void AddClassroomEntranceWaypoints(List<Vector3> path, ClassroomData classroom, Vector3 targetWs, float floorY)
+        {
+            Vector3 doorP = classroom.doorPosition;
+            Vector3 labEntry = GetClassroomLabEntry(classroom);
+            float aisleX = classroom.isNorthWing ? (doorP.x + 4.7f) : (doorP.x - 4.7f);
+
+            path.Add(doorP);
+            path.Add(labEntry);
+            path.Add(new Vector3(aisleX, floorY, targetWs.z));
         }
 
         public List<Vector3> CalculateExitPath(Vector3 currentPos, ClassroomData classroom, ServiceOffice office, Vector3 exitTarget)
@@ -783,15 +887,15 @@ namespace Uniguajira.Simulation
             float corridorZ = isNorth ? 52.0f : 418.0f;
             float floorY = (currentFloor == 1) ? 4.71f : 61.91f;
 
-            // 1. Salir del salón/oficina hacia el pasillo
-            bool isLabClassroom = (classroom != null && classroom.doorName == "Door_GF_N1") ||
-                                  (currentFloor == 1 && currentPos.z < 30.0f && currentPos.x > 130.0f && currentPos.x < 220.0f);
-            if (isLabClassroom)
+            if (classroom != null)
             {
-                path.Add(new Vector3(165.0f, 4.71f, currentPos.z)); // Pasillo central del laboratorio
-                path.Add(LabEntryCorridor);                         // Salida del laboratorio
-                path.Add(new Vector3(160.3f, 4.71f, 34.4f));        // Puerta Door_GF_N1
-                path.Add(new Vector3(160.3f, 4.71f, corridorZ));    // Incorporación al pasillo norte
+                float aisleX = classroom.isNorthWing ? (classroom.doorPosition.x + 4.7f) : (classroom.doorPosition.x - 4.7f);
+                Vector3 labEntry = GetClassroomLabEntry(classroom);
+
+                path.Add(new Vector3(aisleX, floorY, currentPos.z)); // Salir al pasillo interior del salón
+                path.Add(labEntry);                                  // Salida del salón
+                path.Add(classroom.doorPosition);                    // Paso por el marco de la puerta
+                path.Add(new Vector3(classroom.doorPosition.x, floorY, corridorZ)); // Incorporación al pasillo principal
             }
             else
             {
