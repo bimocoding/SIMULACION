@@ -120,6 +120,7 @@ namespace Uniguajira.Simulation
             EnsureAccessPoints();
             EnsureOffices();
             EnsureAllClassroomLabs();
+            EnsureMainStaircase();
 
             cameraController = FindAnyObjectByType<SimulationCameraController>();
             if (cameraController == null && Camera.main != null)
@@ -461,6 +462,180 @@ namespace Uniguajira.Simulation
                     }
                 }
             }
+        }
+
+        private void EnsureMainStaircase()
+        {
+            // Desactivar la escalera antigua deformada del FBX si aún existe
+            var oldStair = GameObject.Find("Bloque_Administrativo_A/Main_Staircase");
+            if (oldStair != null)
+            {
+                var mr = oldStair.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = false;
+                var col = oldStair.GetComponent<Collider>();
+                if (col != null) col.enabled = false;
+                oldStair.name = "Main_Staircase_Broken_Deformed_FBX";
+                oldStair.SetActive(false);
+            }
+
+            // Verificar si la nueva escalera funcional ya existe
+            var stairRoot = GameObject.Find("Main_Staircase");
+            if (stairRoot != null && stairRoot.transform.Find("Tramo_1_Ascenso") != null)
+            {
+                return; // Ya construida y operativa
+            }
+
+            if (stairRoot == null)
+            {
+                stairRoot = new GameObject("Main_Staircase");
+            }
+
+            stairRoot.transform.position = Vector3.zero;
+            stairRoot.transform.rotation = Quaternion.identity;
+            stairRoot.transform.localScale = Vector3.one;
+
+            var shaderLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+
+            var stairMat = new Material(shaderLit) { name = "Mat_Staircase_Granite", color = new Color(0.88f, 0.86f, 0.82f) };
+            var darkTrimMat = new Material(shaderLit) { name = "Mat_Staircase_DarkTrim", color = new Color(0.25f, 0.25f, 0.28f) };
+            var handrailMat = new Material(shaderLit) { name = "Mat_Staircase_Handrail", color = new Color(0.12f, 0.45f, 0.70f) };
+
+            System.Action<Transform, string, Vector3, Vector3, Material, bool> makeBox = (parent, name, pos, size, mat, addCol) =>
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                go.name = name;
+                go.transform.SetParent(parent);
+                go.transform.position = pos;
+                go.transform.localScale = size;
+                var r = go.GetComponent<Renderer>();
+                if (r != null) r.material = mat;
+                if (!addCol)
+                {
+                    var c = go.GetComponent<Collider>();
+                    if (c != null) Destroy(c);
+                }
+            };
+
+            // 1. TRAMO 1 (Floor 1 -> Descanso)
+            var t1Obj = new GameObject("Tramo_1_Ascenso");
+            t1Obj.transform.SetParent(stairRoot.transform);
+
+            float stepLen = 50.0f / 18f;
+            float stepH = 28.62f / 18f;
+            float angleT1 = 29.789f;
+            float rampLen = Mathf.Sqrt(50f * 50f + 28.62f * 28.62f);
+
+            for (int i = 0; i < 18; i++)
+            {
+                float x = 365.0f + (i + 0.5f) * stepLen;
+                float topY = 4.71f + (i + 1) * stepH;
+                float y = topY - stepH * 0.5f;
+                float z = 178.0f;
+                makeBox(t1Obj.transform, "Step_T1_" + i, new Vector3(x, y, z), new Vector3(stepLen, stepH, 16.0f), stairMat, false);
+                makeBox(t1Obj.transform, "Trim_T1_" + i, new Vector3(x + stepLen * 0.42f, topY - 0.08f, z), new Vector3(stepLen * 0.20f, 0.16f, 16.05f), darkTrimMat, false);
+            }
+
+            var z1A = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            z1A.name = "Zanca_T1_Outer";
+            z1A.transform.SetParent(t1Obj.transform);
+            z1A.transform.position = new Vector3(390.0f, 19.02f, 169.6f);
+            z1A.transform.rotation = Quaternion.Euler(0, 0, angleT1);
+            z1A.transform.localScale = new Vector3(rampLen, 3.5f, 0.8f);
+            z1A.GetComponent<Renderer>().material = darkTrimMat;
+            Destroy(z1A.GetComponent<Collider>());
+
+            var z1B = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            z1B.name = "Zanca_T1_Inner";
+            z1B.transform.SetParent(t1Obj.transform);
+            z1B.transform.position = new Vector3(390.0f, 19.02f, 186.4f);
+            z1B.transform.rotation = Quaternion.Euler(0, 0, angleT1);
+            z1B.transform.localScale = new Vector3(rampLen, 3.5f, 0.8f);
+            z1B.GetComponent<Renderer>().material = darkTrimMat;
+            Destroy(z1B.GetComponent<Collider>());
+
+            var ramp1 = new GameObject("Collider_Ramp_T1");
+            ramp1.transform.SetParent(t1Obj.transform);
+            ramp1.transform.position = new Vector3(390.0f, 19.02f, 178.0f);
+            ramp1.transform.rotation = Quaternion.Euler(0, 0, angleT1);
+            var bc1 = ramp1.AddComponent<BoxCollider>();
+            bc1.size = new Vector3(rampLen + 1.0f, 0.4f, 16.2f);
+
+            // 2. DESCANSO INTERMEDIO
+            var landObj = new GameObject("Descanso_Intermedio");
+            landObj.transform.SetParent(stairRoot.transform);
+            makeBox(landObj.transform, "Slab_Descanso", new Vector3(425.5f, 32.53f, 191.0f), new Vector3(21.0f, 1.6f, 42.0f), stairMat, true);
+            makeBox(landObj.transform, "Trim_Descanso", new Vector3(436.2f, 32.53f, 191.0f), new Vector3(0.5f, 1.7f, 42.2f), darkTrimMat, false);
+            makeBox(landObj.transform, "Columna_Descanso_1", new Vector3(428.0f, 18.0f, 175.0f), new Vector3(3.0f, 27.0f, 3.0f), darkTrimMat, true);
+            makeBox(landObj.transform, "Columna_Descanso_2", new Vector3(428.0f, 18.0f, 207.0f), new Vector3(3.0f, 27.0f, 3.0f), darkTrimMat, true);
+
+            // 3. TRAMO 2 (Descanso -> Floor 2)
+            var t2Obj = new GameObject("Tramo_2_Ascenso");
+            t2Obj.transform.SetParent(stairRoot.transform);
+
+            for (int i = 0; i < 18; i++)
+            {
+                float x = 415.0f - (i + 0.5f) * stepLen;
+                float topY = 33.33f + (i + 1) * stepH;
+                float y = topY - stepH * 0.5f;
+                float z = 204.0f;
+                makeBox(t2Obj.transform, "Step_T2_" + i, new Vector3(x, y, z), new Vector3(stepLen, stepH, 16.0f), stairMat, false);
+                makeBox(t2Obj.transform, "Trim_T2_" + i, new Vector3(x - stepLen * 0.42f, topY - 0.08f, z), new Vector3(stepLen * 0.20f, 0.16f, 16.05f), darkTrimMat, false);
+            }
+
+            var z2A = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            z2A.name = "Zanca_T2_Inner";
+            z2A.transform.SetParent(t2Obj.transform);
+            z2A.transform.position = new Vector3(390.0f, 47.64f, 195.6f);
+            z2A.transform.rotation = Quaternion.Euler(0, 0, -angleT1);
+            z2A.transform.localScale = new Vector3(rampLen, 3.5f, 0.8f);
+            z2A.GetComponent<Renderer>().material = darkTrimMat;
+            Destroy(z2A.GetComponent<Collider>());
+
+            var z2B = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            z2B.name = "Zanca_T2_Outer";
+            z2B.transform.SetParent(t2Obj.transform);
+            z2B.transform.position = new Vector3(390.0f, 47.64f, 212.4f);
+            z2B.transform.rotation = Quaternion.Euler(0, 0, -angleT1);
+            z2B.transform.localScale = new Vector3(rampLen, 3.5f, 0.8f);
+            z2B.GetComponent<Renderer>().material = darkTrimMat;
+            Destroy(z2B.GetComponent<Collider>());
+
+            var ramp2 = new GameObject("Collider_Ramp_T2");
+            ramp2.transform.SetParent(t2Obj.transform);
+            ramp2.transform.position = new Vector3(390.0f, 47.64f, 204.0f);
+            ramp2.transform.rotation = Quaternion.Euler(0, 0, -angleT1);
+            var bc2 = ramp2.AddComponent<BoxCollider>();
+            bc2.size = new Vector3(rampLen + 1.0f, 0.4f, 16.2f);
+
+            // 4. DESEMBARQUE PISO 2
+            var p2Exit = new GameObject("Desembarque_Piso_2");
+            p2Exit.transform.SetParent(stairRoot.transform);
+            makeBox(p2Exit.transform, "Slab_P2_Exit", new Vector3(360.0f, 61.15f, 204.0f), new Vector3(10.0f, 1.6f, 16.0f), stairMat, true);
+
+            // 5. BARANDILLAS
+            var railsObj = new GameObject("Barandillas_Seguridad");
+            railsObj.transform.SetParent(stairRoot.transform);
+
+            var r1Inner = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            r1Inner.name = "Rail_T1_Inner";
+            r1Inner.transform.SetParent(railsObj.transform);
+            r1Inner.transform.position = new Vector3(390.0f, 22.8f, 186.2f);
+            r1Inner.transform.rotation = Quaternion.Euler(0, 0, angleT1);
+            r1Inner.transform.localScale = new Vector3(rampLen, 0.30f, 0.25f);
+            r1Inner.GetComponent<Renderer>().material = handrailMat;
+            Destroy(r1Inner.GetComponent<Collider>());
+
+            var r2Inner = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            r2Inner.name = "Rail_T2_Inner";
+            r2Inner.transform.SetParent(railsObj.transform);
+            r2Inner.transform.position = new Vector3(390.0f, 51.4f, 195.8f);
+            r2Inner.transform.rotation = Quaternion.Euler(0, 0, -angleT1);
+            r2Inner.transform.localScale = new Vector3(rampLen, 0.30f, 0.25f);
+            r2Inner.GetComponent<Renderer>().material = handrailMat;
+            Destroy(r2Inner.GetComponent<Collider>());
+
+            makeBox(railsObj.transform, "Rail_Landing_East", new Vector3(435.8f, 36.8f, 191.0f), new Vector3(0.35f, 7.0f, 42.0f), darkTrimMat, true);
+            makeBox(railsObj.transform, "Divider_Central", new Vector3(388.5f, 34.0f, 191.0f), new Vector3(47.0f, 28.0f, 0.5f), darkTrimMat, true);
         }
 
         private void EnsureModelAndEnvironmentInScene()
@@ -832,12 +1007,10 @@ namespace Uniguajira.Simulation
                 }
                 else
                 {
-                    // Piso 2: avanzar por pasillo de piso 1 hasta la base de la escalera (x=380)
-                    path.Add(new Vector3(380.0f, 4.71f, corridorZ) + RandomJitter());
-                    path.Add(new Vector3(380.0f, 4.71f, 193.0f));
+                    // Piso 2: avanzar por pasillo de piso 1 hasta el acceso a la escalera monumental
+                    path.Add(new Vector3(355.0f, 4.71f, corridorZ) + RandomJitter());
                     AddStaircaseAscent(path);
-                    path.Add(new Vector3(360.0f, 61.91f, 193.0f));
-                    path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
+                    path.Add(new Vector3(355.0f, 61.95f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
                     if (classroom != null)
                     {
@@ -863,11 +1036,10 @@ namespace Uniguajira.Simulation
                 }
                 else
                 {
-                    path.Add(new Vector3(380.0f, 4.71f, corridorZ) + RandomJitter());
-                    path.Add(new Vector3(380.0f, 4.71f, 193.0f));
+                    // Piso 2: avanzar por pasillo de piso 1 hasta el acceso a la escalera monumental
+                    path.Add(new Vector3(355.0f, 4.71f, corridorZ) + RandomJitter());
                     AddStaircaseAscent(path);
-                    path.Add(new Vector3(360.0f, 61.91f, 193.0f));
-                    path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
+                    path.Add(new Vector3(355.0f, 61.95f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
                     if (classroom != null)
                     {
@@ -918,13 +1090,11 @@ namespace Uniguajira.Simulation
 
             if (currentFloor == 2)
             {
-                // Recorrer pasillo hasta la conexión de la escalera en piso 2 (x=360)
-                path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
-                path.Add(new Vector3(360.0f, 61.91f, 193.0f));
+                // Recorrer pasillo hasta la conexión de la escalera monumental en piso 2
+                path.Add(new Vector3(355.0f, 61.95f, corridorZ) + RandomJitter());
                 AddStaircaseDescent(path);
-                path.Add(new Vector3(380.0f, 4.71f, 193.0f));
                 // Volver a ingresar al pasillo en piso 1
-                path.Add(new Vector3(380.0f, 4.71f, corridorZ) + RandomJitter());
+                path.Add(new Vector3(355.0f, 4.71f, corridorZ) + RandomJitter());
             }
 
             if (exitViaMain)
@@ -948,22 +1118,36 @@ namespace Uniguajira.Simulation
 
         private void AddStaircaseAscent(List<Vector3> path)
         {
-            path.Add(new Vector3(380.0f, 4.71f, 193.0f));
-            path.Add(new Vector3(398.0f, 20.0f, 193.0f));
-            path.Add(new Vector3(418.0f, 40.0f, 193.0f));
-            path.Add(new Vector3(400.0f, 54.0f, 193.0f));
-            path.Add(new Vector3(380.0f, 61.91f, 193.0f));
-            path.Add(new Vector3(360.0f, 61.91f, 193.0f));
+            // Tramo 1 (Piso 1 -> Descanso intermedio)
+            path.Add(new Vector3(355.0f, 4.71f, 178.0f));
+            path.Add(new Vector3(365.0f, 4.71f, 178.0f));
+            path.Add(new Vector3(390.0f, 19.0f, 178.0f));
+            path.Add(new Vector3(415.0f, 33.33f, 178.0f));
+            // Giro limpio en el descanso intermedio
+            path.Add(new Vector3(424.0f, 33.33f, 178.0f));
+            path.Add(new Vector3(424.0f, 33.33f, 204.0f));
+            // Tramo 2 (Descanso -> Piso 2)
+            path.Add(new Vector3(415.0f, 33.33f, 204.0f));
+            path.Add(new Vector3(390.0f, 47.6f, 204.0f));
+            path.Add(new Vector3(365.0f, 61.95f, 204.0f));
+            path.Add(new Vector3(355.0f, 61.95f, 204.0f));
         }
 
         private void AddStaircaseDescent(List<Vector3> path)
         {
-            path.Add(new Vector3(360.0f, 61.91f, 193.0f));
-            path.Add(new Vector3(380.0f, 61.91f, 193.0f));
-            path.Add(new Vector3(400.0f, 54.0f, 193.0f));
-            path.Add(new Vector3(418.0f, 40.0f, 193.0f));
-            path.Add(new Vector3(398.0f, 20.0f, 193.0f));
-            path.Add(new Vector3(380.0f, 4.71f, 193.0f));
+            // Tramo 2 (Piso 2 -> Descanso intermedio)
+            path.Add(new Vector3(355.0f, 61.95f, 204.0f));
+            path.Add(new Vector3(365.0f, 61.95f, 204.0f));
+            path.Add(new Vector3(390.0f, 47.6f, 204.0f));
+            path.Add(new Vector3(415.0f, 33.33f, 204.0f));
+            // Giro limpio en el descanso intermedio
+            path.Add(new Vector3(424.0f, 33.33f, 204.0f));
+            path.Add(new Vector3(424.0f, 33.33f, 178.0f));
+            // Tramo 1 (Descanso -> Piso 1)
+            path.Add(new Vector3(415.0f, 33.33f, 178.0f));
+            path.Add(new Vector3(390.0f, 19.0f, 178.0f));
+            path.Add(new Vector3(365.0f, 4.71f, 178.0f));
+            path.Add(new Vector3(355.0f, 4.71f, 178.0f));
         }
 
         private Vector3 RandomJitter()
