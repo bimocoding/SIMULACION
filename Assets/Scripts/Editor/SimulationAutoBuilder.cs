@@ -157,7 +157,11 @@ namespace Uniguajira.Simulation.Editor
             CreateOffice(officesContainer.transform, simMgr, OfficeType.VicerrectoriaDocencia,
                 "Vicerrectoria_Docencia", new Vector3(310.0f, 61.91f, 75.0f), 2, 1, 4.5f, 1.2f);
 
-            // 7. Generar Prefab del Agente si no existe
+            // 7. Configurar Colisionadores del Edificio y Orientación de Bancas
+            ConfigureBuildingColliders(blockInstance);
+            ConfigureBenchOrientations();
+
+            // 8. Generar Prefab del Agente si no existe
             GameObject agentPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Prefabs/Agent_Pedestrian.prefab");
             if (agentPrefab == null)
             {
@@ -165,6 +169,7 @@ namespace Uniguajira.Simulation.Editor
                 GameObject tempAgent = GameObject.CreatePrimitive(PrimitiveType.Capsule);
                 tempAgent.name = "Agent_Pedestrian";
                 tempAgent.transform.localScale = new Vector3(1.4f, 1.3f, 1.4f);
+                tempAgent.AddComponent<CharacterController>();
                 tempAgent.AddComponent<AgentPedestrian>();
 
                 agentPrefab = PrefabUtility.SaveAsPrefabAsset(tempAgent, "Assets/Prefabs/Agent_Pedestrian.prefab");
@@ -172,13 +177,84 @@ namespace Uniguajira.Simulation.Editor
             }
             simMgr.agentPrefab = agentPrefab;
 
-            // 8. Guardar Escena
+            // 9. Guardar Escena
             EditorUtility.SetDirty(mgrObj);
             EditorSceneManager.MarkSceneDirty(activeScene);
             EditorSceneManager.SaveScene(activeScene);
             AssetDatabase.SaveAssets();
 
             Debug.Log("¡Simulación del Bloque Administrativo A configurada y guardada exitosamente!");
+        }
+
+        private static void ConfigureBuildingColliders(GameObject blockInstance)
+        {
+            if (blockInstance == null) blockInstance = GameObject.Find("Bloque_Administrativo_A");
+            if (blockInstance == null) return;
+
+            var renderers = blockInstance.GetComponentsInChildren<Renderer>(true);
+            int addedCount = 0;
+            foreach (var r in renderers)
+            {
+                string n = r.gameObject.name.ToLower();
+                if (n.Contains("tree") || n.Contains("foliage") || n.Contains("leaf") || n.Contains("hoja") ||
+                    n.Contains("arbol") || n.Contains("bush") || n.Contains("vegetation") || n.Contains("branch"))
+                {
+                    continue;
+                }
+                var col = r.GetComponent<Collider>();
+                if (col == null)
+                {
+                    var mc = r.gameObject.AddComponent<MeshCollider>();
+                    mc.convex = false;
+                    addedCount++;
+                }
+            }
+
+            var allBenches = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsSortMode.None);
+            foreach (var t in allBenches)
+            {
+                if (t.name.StartsWith("Bench_") && t.GetComponent<Collider>() == null)
+                {
+                    t.gameObject.AddComponent<MeshCollider>();
+                }
+            }
+            Debug.Log($"Colisionadores de muros configurados en el Bloque ({addedCount} MeshColliders nuevos añadidos).");
+        }
+
+        private static void ConfigureBenchOrientations()
+        {
+            var allBenches = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsSortMode.None);
+            int flipped = 0;
+            foreach (var t in allBenches)
+            {
+                if (!t.name.StartsWith("Bench_")) continue;
+                var mf = t.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null) continue;
+
+                float topZSum = 0, seatZSum = 0;
+                int topCount = 0, seatCount = 0;
+                foreach (var v in mf.sharedMesh.vertices)
+                {
+                    var w = t.TransformPoint(v);
+                    if (w.y > (t.position.y + 4.5f)) { topZSum += w.z; topCount++; }
+                    if (w.y > (t.position.y + 1.0f) && w.y < (t.position.y + 3.0f)) { seatZSum += w.z; seatCount++; }
+                }
+                float topZ = topCount > 0 ? (topZSum / topCount) : t.position.z;
+                float seatZ = seatCount > 0 ? (seatZSum / seatCount) : t.position.z;
+
+                bool isNorth = t.position.z < 200f;
+                bool needsFlip = isNorth ? (topZ > seatZ) : (topZ < seatZ);
+
+                if (needsFlip)
+                {
+                    var rend = t.GetComponent<Renderer>();
+                    Vector3 center = rend != null ? rend.bounds.center : t.position;
+                    t.RotateAround(center, Vector3.up, 180f);
+                    EditorUtility.SetDirty(t);
+                    flipped++;
+                }
+            }
+            Debug.Log($"Orientación de bancas verificada ({flipped} rotadas a espaldar contra la pared).");
         }
 
         private static void CreateOffice(Transform parent, SimulationManager mgr, OfficeType type, string name,

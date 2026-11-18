@@ -78,13 +78,13 @@ namespace Uniguajira.Simulation
         public static readonly Vector3 PosCourtyardEast = new Vector3(350.0f, 4.71f, 200.0f);
 
         // Escalera monumental (Piso 1 -> Piso 2)
-        public static readonly Vector3 StairBottom = new Vector3(410.3f, 4.71f, 222.9f);
-        public static readonly Vector3 StairMid1 = new Vector3(410.3f, 20.0f, 200.0f);
-        public static readonly Vector3 StairLanding1 = new Vector3(410.3f, 40.0f, 182.0f);
-        public static readonly Vector3 StairLanding2 = new Vector3(440.3f, 41.0f, 182.0f);
-        public static readonly Vector3 StairMid2 = new Vector3(440.3f, 59.0f, 218.0f);
-        public static readonly Vector3 StairTop = new Vector3(440.3f, 62.0f, 222.9f);
-        public static readonly Vector3 StairExitFloor2 = new Vector3(410.0f, 62.0f, 222.9f);
+        public static readonly Vector3 StairBottom = new Vector3(390.0f, 4.71f, 193.0f);
+        public static readonly Vector3 StairMid1 = new Vector3(410.3f, 20.0f, 196.0f);
+        public static readonly Vector3 StairLanding1 = new Vector3(410.3f, 40.0f, 185.0f);
+        public static readonly Vector3 StairLanding2 = new Vector3(437.0f, 41.0f, 185.0f);
+        public static readonly Vector3 StairMid2 = new Vector3(437.0f, 59.0f, 196.0f);
+        public static readonly Vector3 StairTop = new Vector3(437.0f, 62.0f, 196.0f);
+        public static readonly Vector3 StairExitFloor2 = new Vector3(360.0f, 62.0f, 196.0f);
 
         private void Awake()
         {
@@ -263,6 +263,74 @@ namespace Uniguajira.Simulation
                 {
                     gr.material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
                     gr.material.color = new Color(0.82f, 0.80f, 0.76f);
+                }
+            }
+
+            // Asegurar colisionadores en el edificio y orientación correcta de bancas
+            EnsureBuildingColliders(block);
+            EnsureBenchOrientations();
+        }
+
+        private void EnsureBuildingColliders(GameObject block)
+        {
+            if (block == null) block = GameObject.Find("Bloque_Administrativo_A");
+            if (block == null) return;
+
+            var renderers = block.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in renderers)
+            {
+                string n = r.gameObject.name.ToLower();
+                if (n.Contains("tree") || n.Contains("foliage") || n.Contains("leaf") || n.Contains("hoja") ||
+                    n.Contains("arbol") || n.Contains("bush") || n.Contains("vegetation") || n.Contains("branch"))
+                {
+                    continue;
+                }
+                var col = r.GetComponent<Collider>();
+                if (col == null)
+                {
+                    var mc = r.gameObject.AddComponent<MeshCollider>();
+                    mc.convex = false;
+                }
+            }
+
+            var allBenches = FindObjectsByType<Transform>(FindObjectsSortMode.None);
+            foreach (var t in allBenches)
+            {
+                if (t.name.StartsWith("Bench_") && t.GetComponent<Collider>() == null)
+                {
+                    t.gameObject.AddComponent<MeshCollider>();
+                }
+            }
+        }
+
+        private void EnsureBenchOrientations()
+        {
+            var allBenches = FindObjectsByType<Transform>(FindObjectsSortMode.None);
+            foreach (var t in allBenches)
+            {
+                if (!t.name.StartsWith("Bench_")) continue;
+                var mf = t.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null) continue;
+
+                float topZSum = 0, seatZSum = 0;
+                int topCount = 0, seatCount = 0;
+                foreach (var v in mf.sharedMesh.vertices)
+                {
+                    var w = t.TransformPoint(v);
+                    if (w.y > (t.position.y + 4.5f)) { topZSum += w.z; topCount++; }
+                    if (w.y > (t.position.y + 1.0f) && w.y < (t.position.y + 3.0f)) { seatZSum += w.z; seatCount++; }
+                }
+                float topZ = topCount > 0 ? (topZSum / topCount) : t.position.z;
+                float seatZ = seatCount > 0 ? (seatZSum / seatCount) : t.position.z;
+
+                bool isNorth = t.position.z < 200f;
+                bool needsFlip = isNorth ? (topZ > seatZ) : (topZ < seatZ);
+
+                if (needsFlip)
+                {
+                    var rend = t.GetComponent<Renderer>();
+                    Vector3 center = rend != null ? rend.bounds.center : t.position;
+                    t.RotateAround(center, Vector3.up, 180f);
                 }
             }
         }
@@ -465,56 +533,77 @@ namespace Uniguajira.Simulation
             List<Vector3> path = new List<Vector3>();
             int destFloor = (classroom != null) ? classroom.floorLevel : (office != null ? office.floorLevel : 1);
             bool isNorth = (classroom != null) ? classroom.isNorthWing : (office == null || office.transform.position.z < 200f);
-            Vector3 finalDest = (classroom != null) ? classroom.doorPosition : (office.queueStartPoint != null ? office.queueStartPoint.position : office.transform.position);
-            Vector3 finalHallway = (classroom != null) ? classroom.hallwayPoint : (isNorth ? new Vector3(finalDest.x, (destFloor == 1 ? 4.71f : 61.91f), 52.0f) : new Vector3(finalDest.x, (destFloor == 1 ? 4.71f : 61.91f), 418.0f));
+            
+            float corridorZ = isNorth ? 52.0f : 418.0f;
+            float floorY = (destFloor == 1) ? 4.71f : 61.91f;
 
+            // Destino en la puerta o en la cola de la oficina
+            Vector3 finalDest;
+            if (classroom != null)
+            {
+                // Pararse frente a la puerta en el pasillo sin atravesar la pared
+                float standZ = isNorth ? 37.5f : 435.5f;
+                finalDest = new Vector3(classroom.doorPosition.x, floorY, standZ);
+            }
+            else
+            {
+                finalDest = office.queueStartPoint != null ? office.queueStartPoint.position : office.transform.position;
+            }
+
+            Vector3 finalHallway = new Vector3(finalDest.x, floorY, corridorZ);
             bool isSpawningAtMain = (startPos.x < 0);
 
             if (isSpawningAtMain)
             {
-                path.Add(PosPlazaEntrance + RandomJitter());
-                path.Add(PosCourtyardWest + RandomJitter());
+                // 1. Plaza exterior amplia
+                path.Add(new Vector3(-120.0f, 4.71f, 150.0f) + RandomJitter());
+                // 2. Acceso oeste despejado entre columnas
+                path.Add(new Vector3(35.0f, 4.71f, 200.0f) + RandomJitter());
 
                 if (destFloor == 1)
                 {
-                    float corridorZ = isNorth ? 52.0f : 418.0f;
-                    path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
+                    // 3. Giro ortogonal limpio al pasillo Norte o Sur
+                    path.Add(new Vector3(35.0f, 4.71f, corridorZ) + RandomJitter());
+                    // 4. Recorrido por el centro del pasillo hasta el salón/oficina
                     path.Add(finalHallway + RandomJitter());
-                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
-                    path.Add(stepIn);
+                    // 5. Acercarse a la puerta/cola
+                    path.Add(finalDest);
                 }
                 else
                 {
-                    path.Add(PosCourtyardEast + RandomJitter());
+                    // 3. Recorrer patio central despejado hacia la base de la escalera
+                    path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
+                    // 4. Subir escaleras monumentales
                     AddStaircaseAscent(path);
-
-                    float corridorZ = isNorth ? 52.0f : 418.0f;
-                    path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
+                    // 5. Llegada al puente este de Piso 2
+                    path.Add(new Vector3(360.0f, 61.91f, 196.0f) + RandomJitter());
+                    // 6. Conexión al pasillo Norte o Sur de Piso 2
+                    path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
+                    // 7. Recorrido por el centro del pasillo
                     path.Add(finalHallway + RandomJitter());
-                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
-                    path.Add(stepIn);
+                    // 8. Acercarse a la puerta/cola
+                    path.Add(finalDest);
                 }
             }
             else
             {
+                // Puerta trasera (Este)
                 path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
+                path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
 
                 if (destFloor == 1)
                 {
-                    float corridorZ = isNorth ? 52.0f : 418.0f;
-                    path.Add(new Vector3(430.0f, 4.71f, corridorZ) + RandomJitter());
+                    path.Add(new Vector3(360.0f, 4.71f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
-                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
-                    path.Add(stepIn);
+                    path.Add(finalDest);
                 }
                 else
                 {
                     AddStaircaseAscent(path);
-                    float corridorZ = isNorth ? 52.0f : 418.0f;
-                    path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
+                    path.Add(new Vector3(360.0f, 61.91f, 196.0f) + RandomJitter());
+                    path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
                     path.Add(finalHallway + RandomJitter());
-                    Vector3 stepIn = classroom != null ? (isNorth ? classroom.doorPosition + Vector3.forward * 4.0f : classroom.doorPosition - Vector3.forward * 4.0f) : finalDest;
-                    path.Add(stepIn);
+                    path.Add(finalDest);
                 }
             }
 
@@ -531,25 +620,31 @@ namespace Uniguajira.Simulation
             float corridorZ = isNorth ? 52.0f : 418.0f;
             float floorY = (currentFloor == 1) ? 4.71f : 61.91f;
 
+            // 1. Salir del salón hacia el centro del pasillo
             path.Add(new Vector3(currentPos.x, floorY, corridorZ) + RandomJitter());
 
             if (currentFloor == 2)
             {
-                path.Add(new Vector3(410.0f, 61.91f, corridorZ) + RandomJitter());
-                path.Add(StairExitFloor2);
+                // Recorrer pasillo hasta el puente de la escalera
+                path.Add(new Vector3(360.0f, 61.91f, corridorZ) + RandomJitter());
+                path.Add(new Vector3(360.0f, 61.91f, 196.0f) + RandomJitter());
                 AddStaircaseDescent(path);
-                path.Add(PosCourtyardEast + RandomJitter());
+                path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
             }
 
             if (exitViaMain)
             {
-                if (currentFloor == 1) path.Add(new Vector3(50.0f, 4.71f, corridorZ) + RandomJitter());
-                path.Add(PosCourtyardWest + RandomJitter());
-                path.Add(PosPlazaEntrance + RandomJitter());
+                if (currentFloor == 1)
+                {
+                    path.Add(new Vector3(35.0f, 4.71f, corridorZ) + RandomJitter());
+                }
+                path.Add(new Vector3(35.0f, 4.71f, 200.0f) + RandomJitter());
+                path.Add(new Vector3(-120.0f, 4.71f, 150.0f) + RandomJitter());
                 path.Add(exitTarget);
             }
             else
             {
+                path.Add(new Vector3(360.0f, 4.71f, 193.0f) + RandomJitter());
                 path.Add(new Vector3(430.0f, 4.71f, 200.0f) + RandomJitter());
                 path.Add(exitTarget);
             }
@@ -911,9 +1006,20 @@ namespace Uniguajira.Simulation
             DrawCamButton("4. Pasillo Piso 2", SimulationCameraController.CameraViewMode.PasilloPiso2, curCam);
             DrawCamButton("5. Salones Piso 2", SimulationCameraController.CameraViewMode.SalonesPiso2, curCam);
             DrawCamButton("6. Panorámica", SimulationCameraController.CameraViewMode.Panoramica, curCam);
-            DrawCamButton("7. Seguir Estudiante", SimulationCameraController.CameraViewMode.SeguirEstudiante, curCam);
+            DrawCamButton("7. Cámara Libre (Físicas)", SimulationCameraController.CameraViewMode.CamaraLibre, curCam);
 
             GUILayout.EndArea();
+
+            // Guía de Controles en Pantalla si la Cámara Libre está activa
+            if (curCam == SimulationCameraController.CameraViewMode.CamaraLibre)
+            {
+                float hudW = Mathf.Min(720f, Screen.width * 0.9f);
+                float hudX = (Screen.width - hudW) * 0.5f;
+                GUI.Box(new Rect(hudX, Screen.height - 42, hudW, 34), "");
+                GUI.Label(new Rect(hudX, Screen.height - 38, hudW, 26),
+                    "<color=cyan><b>CÁMARA LIBRE ACTIVA:</b></color> <b>WASD</b> Mover | <b>Clic Der + Mouse</b> Girar | <b>Espacio/Q</b> Subir/Bajar | <b>Shift</b> Correr | <i>[Físicas de Muros Activas]</i>",
+                    new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, richText = true, fontSize = 11 });
+            }
         }
 
         private void DrawCamButton(string label, SimulationCameraController.CameraViewMode mode, SimulationCameraController.CameraViewMode activeMode)
@@ -937,7 +1043,7 @@ namespace Uniguajira.Simulation
                 case SimulationCameraController.CameraViewMode.PasilloPiso2: return "4. Pasillo Piso 2";
                 case SimulationCameraController.CameraViewMode.SalonesPiso2: return "5. Salones Piso 2";
                 case SimulationCameraController.CameraViewMode.Panoramica: return "6. Panorámica Aérea";
-                case SimulationCameraController.CameraViewMode.SeguirEstudiante: return "7. Seguir Estudiante";
+                case SimulationCameraController.CameraViewMode.CamaraLibre: return "7. Cámara Libre (Físicas)";
                 default: return mode.ToString();
             }
         }

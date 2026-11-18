@@ -24,11 +24,12 @@ namespace Uniguajira.Simulation
         public AgentDestinationType destinationType = AgentDestinationType.Classroom;
         public AgentMetrics metrics = new AgentMetrics();
 
-        [Header("Configuración de Movimiento")]
+        [Header("Configuración de Movimiento y Físicas")]
         public float walkSpeed = 6.5f;
         public float angularSpeed = 400f;
-        public float stoppingDistance = 1.2f;
+        public float stoppingDistance = 1.3f;
 
+        private CharacterController characterController;
         private NavMeshAgent navAgent;
         private ClassroomData targetClassroom;
         private ServiceOffice targetOffice;
@@ -38,6 +39,7 @@ namespace Uniguajira.Simulation
         // Cola de waypoints para navegación precisa por pasillos y escaleras
         private readonly Queue<Vector3> waypointQueue = new Queue<Vector3>();
         private bool hasWaypoints = false;
+        private float timeBlockedOnTarget = 0f;
 
         // Visuales
         private Transform visualTransform;
@@ -48,11 +50,33 @@ namespace Uniguajira.Simulation
 
         private void Awake()
         {
-            Collider rootCol = GetComponent<Collider>();
-            if (rootCol != null)
+            EnsurePhysicsComponents();
+            SetupVisualComponents();
+        }
+
+        private void EnsurePhysicsComponents()
+        {
+            // Remover cualquier collider previo en el root que no sea CharacterController
+            var colliders = GetComponents<Collider>();
+            foreach (var c in colliders)
             {
-                rootCol.isTrigger = true;
+                if (!(c is CharacterController))
+                {
+                    Destroy(c);
+                }
             }
+
+            characterController = GetComponent<CharacterController>();
+            if (characterController == null)
+            {
+                characterController = gameObject.AddComponent<CharacterController>();
+            }
+            characterController.radius = 0.5f;
+            characterController.height = 1.8f;
+            characterController.center = new Vector3(0, 0.9f, 0);
+            characterController.stepOffset = 0.4f;
+            characterController.slopeLimit = 50f;
+            characterController.minMoveDistance = 0f;
 
             navAgent = GetComponent<NavMeshAgent>();
             if (navAgent != null)
@@ -61,13 +85,10 @@ namespace Uniguajira.Simulation
                 navAgent.stoppingDistance = stoppingDistance;
                 navAgent.autoBraking = true;
             }
-
-            SetupVisualComponents();
         }
 
         private void SetupVisualComponents()
         {
-            // Separar visual del root para permitir bobbing independiente de la altura Y
             MeshRenderer rootRend = GetComponent<MeshRenderer>();
             MeshFilter rootMf = GetComponent<MeshFilter>();
             if (rootRend != null) Destroy(rootRend);
@@ -135,7 +156,6 @@ namespace Uniguajira.Simulation
             metrics.floorLevel = classroom.floorLevel;
             metrics.spawnTime = Time.time;
 
-            // Colores por rol
             if (role == AgentRole.Estudiante)
             {
                 baseRoleColor = new Color(0.2f, 0.65f, 1.0f); // Azul estudiante
@@ -249,11 +269,13 @@ namespace Uniguajira.Simulation
                 }
             }
             hasWaypoints = (waypointQueue.Count > 0);
+            timeBlockedOnTarget = 0f;
             AdvanceNextWaypoint();
         }
 
         private void AdvanceNextWaypoint()
         {
+            timeBlockedOnTarget = 0f;
             if (waypointQueue.Count > 0)
             {
                 currentTargetPosition = waypointQueue.Dequeue();
@@ -393,20 +415,36 @@ namespace Uniguajira.Simulation
             if (!useNavMesh && (currentState == AgentState.WalkingToDestination || currentState == AgentState.Exiting || currentState == AgentState.InQueue))
             {
                 Vector3 toTarget = currentTargetPosition - transform.position;
-                float dist = toTarget.magnitude;
+                Vector3 horizontalDir = new Vector3(toTarget.x, 0, toTarget.z);
+                float dist = horizontalDir.magnitude;
 
-                if (dist > 0.2f)
+                if (dist > 0.15f)
                 {
                     // Rotación suave hacia el waypoint
-                    Vector3 forwardDir = new Vector3(toTarget.x, 0, toTarget.z);
-                    if (forwardDir.sqrMagnitude > 0.001f)
-                    {
-                        Quaternion targetRot = Quaternion.LookRotation(forwardDir);
-                        transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRot, angularSpeed * Time.deltaTime);
-                    }
+                    Quaternion targetRot = Quaternion.LookRotation(horizontalDir);
+                    transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRot, angularSpeed * Time.deltaTime);
 
-                    // Avance suave
-                    transform.position = Vector3.MoveTowards(transform.position, currentTargetPosition, walkSpeed * Time.deltaTime);
+                    // Velocidad horizontal
+                    Vector3 velocity = horizontalDir.normalized * Mathf.Min(walkSpeed, dist / Time.deltaTime);
+
+                    // Desplazamiento vertical (escaleras o ajuste de piso)
+                    float yDiff = currentTargetPosition.y - transform.position.y;
+                    velocity.y = Mathf.Clamp(yDiff * 5.0f, -12.0f, 12.0f);
+
+                    // MOVIMIENTO CON FÍSICAS: CharacterController.Move() usa PhysX
+                    // Respeta rigurosamente los MeshColliders de paredes, columnas, puertas y bancas
+                    if (characterController != null && characterController.enabled)
+                    {
+                        CollisionFlags flags = characterController.Move(velocity * Time.deltaTime);
+                        if ((flags & CollisionFlags.Sides) != 0 && dist < 2.5f)
+                        {
+                            timeBlockedOnTarget += Time.deltaTime;
+                        }
+                    }
+                    else
+                    {
+                        transform.position += velocity * Time.deltaTime;
+                    }
 
                     // Efecto de caminado (bobbing natural)
                     bobbingTimer += Time.deltaTime * 8.0f;
@@ -429,7 +467,20 @@ namespace Uniguajira.Simulation
             {
                 float xzDist = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(currentTargetPosition.x, currentTargetPosition.z));
                 float yDist = Mathf.Abs(transform.position.y - currentTargetPosition.y);
-                return xzDist <= (stoppingDistance * 1.5f) && yDist <= 6.0f;
+
+                // Si está dentro de la distancia de parada
+                if (xzDist <= (stoppingDistance * 1.4f) && yDist <= 5.0f)
+                {
+                    return true;
+                }
+
+                // O si la física del muro/puerta lo detuvo cerca de la meta
+                if (timeBlockedOnTarget > 0.4f && xzDist <= 2.8f && yDist <= 5.0f)
+                {
+                    return true;
+                }
+
+                return false;
             }
         }
 
